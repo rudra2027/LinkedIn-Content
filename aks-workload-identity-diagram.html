@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AKS Workload Identity + CSI Secret Store Flow</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;600;800&display=swap');
+
+  :root {
+    --bg: #060a14;
+    --surface: #0d1526;
+    --border: #1a2a4a;
+    --azure: #0078d4;
+    --azure-light: #2ea8ff;
+    --k8s: #326ce5;
+    --k8s-light: #7ba8ff;
+    --green: #00d68f;
+    --orange: #ff8c42;
+    --purple: #b06cff;
+    --red: #ff4d6d;
+    --yellow: #ffd166;
+    --text: #c8d8f0;
+    --muted: #4a6080;
+    --glow-azure: rgba(0,120,212,0.3);
+    --glow-k8s: rgba(50,108,229,0.3);
+    --glow-green: rgba(0,214,143,0.25);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+    padding: 20px;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,120,212,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,120,212,0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrapper {
+    position: relative;
+    z-index: 1;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 40px;
+    animation: fadeDown 0.8s ease both;
+  }
+
+  header h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(18px, 2.5vw, 28px);
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+
+  header h1 span { color: var(--azure-light); }
+
+  header p {
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  /* ── MAIN DIAGRAM GRID ── */
+  .diagram {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: auto auto auto;
+    gap: 16px;
+    margin-bottom: 30px;
+  }
+
+  /* ── CARDS ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    position: relative;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  .card.show { animation: cardIn 0.6s ease forwards; }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 12px;
+    opacity: 0;
+    transition: opacity 0.4s;
+    pointer-events: none;
+  }
+
+  .card.azure::before { background: radial-gradient(circle at top left, var(--glow-azure), transparent 60%); }
+  .card.k8s::before   { background: radial-gradient(circle at top left, var(--glow-k8s), transparent 60%); }
+  .card.green::before { background: radial-gradient(circle at top left, var(--glow-green), transparent 60%); }
+  .card.pulse::before { opacity: 1; }
+
+  .card-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .card-title .icon {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .badge {
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 1px;
+    font-weight: 600;
+    margin-left: auto;
+  }
+
+  /* ── Component Pills ── */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 600;
+    margin: 3px 2px;
+    border: 1px solid transparent;
+    transition: all 0.3s;
+  }
+
+  .pill.azure   { background: rgba(0,120,212,0.12); border-color: rgba(0,120,212,0.4); color: var(--azure-light); }
+  .pill.k8s     { background: rgba(50,108,229,0.12); border-color: rgba(50,108,229,0.4); color: var(--k8s-light); }
+  .pill.green   { background: rgba(0,214,143,0.1); border-color: rgba(0,214,143,0.35); color: var(--green); }
+  .pill.purple  { background: rgba(176,108,255,0.1); border-color: rgba(176,108,255,0.35); color: var(--purple); }
+  .pill.orange  { background: rgba(255,140,66,0.1); border-color: rgba(255,140,66,0.35); color: var(--orange); }
+  .pill.yellow  { background: rgba(255,209,102,0.1); border-color: rgba(255,209,102,0.35); color: var(--yellow); }
+
+  .pill.active {
+    box-shadow: 0 0 10px currentColor;
+    transform: scale(1.04);
+  }
+
+  /* ── POD VISUAL ── */
+  .pod-box {
+    border: 1.5px dashed var(--k8s);
+    border-radius: 10px;
+    padding: 12px;
+    margin-top: 8px;
+    position: relative;
+  }
+
+  .pod-box .pod-label {
+    position: absolute;
+    top: -9px; left: 10px;
+    background: var(--surface);
+    padding: 0 6px;
+    font-size: 9px;
+    color: var(--k8s-light);
+    letter-spacing: 1.5px;
+    font-weight: 600;
+  }
+
+  .pod-internals {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .volume-mount {
+    background: rgba(176,108,255,0.08);
+    border: 1px solid rgba(176,108,255,0.3);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 9px;
+    color: var(--purple);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* ── FLOW SECTION ── */
+  .flow-section {
+    grid-column: 1 / -1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    opacity: 0;
+  }
+
+  .flow-section.show { animation: cardIn 0.6s ease 0.8s forwards; }
+
+  .flow-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+
+  /* ── STEP FLOW ── */
+  .steps {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+
+  .step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 120px;
+    opacity: 0;
+  }
+
+  .step-num {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    font-family: 'Syne', sans-serif;
+    border: 2px solid;
+    position: relative;
+    z-index: 2;
+    transition: all 0.3s;
+  }
+
+  .step-num.active {
+    box-shadow: 0 0 18px currentColor;
+    transform: scale(1.15);
+  }
+
+  .step-label {
+    font-size: 9px;
+    text-align: center;
+    margin-top: 8px;
+    color: var(--muted);
+    line-height: 1.5;
+    max-width: 100px;
+  }
+
+  .step-label strong { color: var(--text); display: block; margin-bottom: 2px; font-size: 10px; }
+
+  .connector {
+    flex: 1;
+    height: 2px;
+    margin-top: 15px;
+    position: relative;
+    min-width: 20px;
+  }
+
+  .connector-line {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--border);
+    border-radius: 1px;
+  }
+
+  .connector-pulse {
+    position: absolute;
+    top: -2px; left: -10px;
+    width: 20px; height: 6px;
+    border-radius: 3px;
+    opacity: 0;
+  }
+
+  /* ── DAEMONSET VISUAL ── */
+  .ds-nodes {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .ds-node {
+    flex: 1;
+    border: 1px solid rgba(255,140,66,0.3);
+    border-radius: 8px;
+    padding: 8px;
+    background: rgba(255,140,66,0.05);
+    text-align: center;
+    font-size: 9px;
+    color: var(--orange);
+  }
+
+  .ds-node .node-icon { font-size: 16px; display: block; margin-bottom: 4px; }
+  .ds-node .node-pod {
+    margin-top: 4px;
+    background: rgba(255,140,66,0.1);
+    border-radius: 4px;
+    padding: 3px;
+    font-size: 8px;
+  }
+
+  /* ── KEY VAULT ── */
+  .kv-secrets {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 8px;
+  }
+
+  .kv-secret {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0,214,143,0.05);
+    border: 1px solid rgba(0,214,143,0.2);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 9px;
+    color: var(--green);
+    transition: all 0.3s;
+  }
+
+  .kv-secret.unlocked {
+    background: rgba(0,214,143,0.12);
+    border-color: rgba(0,214,143,0.5);
+    box-shadow: 0 0 8px rgba(0,214,143,0.2);
+  }
+
+  /* ── SPC CARD ── */
+  .spc-yaml {
+    background: #070e1c;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 9px;
+    line-height: 1.8;
+    border: 1px solid var(--border);
+    margin-top: 8px;
+    overflow: hidden;
+  }
+
+  .spc-yaml .y-key   { color: var(--k8s-light); }
+  .spc-yaml .y-val   { color: var(--green); }
+  .spc-yaml .y-str   { color: var(--yellow); }
+  .spc-yaml .y-com   { color: var(--muted); }
+  .spc-yaml .y-type  { color: var(--purple); }
+
+  /* ── STATUS BAR ── */
+  .status-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 16px;
+    font-size: 10px;
+    flex-wrap: wrap;
+    opacity: 0;
+    animation: cardIn 0.6s ease 1.2s forwards;
+  }
+
+  .status-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+  }
+
+  .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    animation: blink 2s infinite;
+  }
+
+  .status-item span { color: var(--text); }
+
+  /* ── LEGEND ── */
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 16px;
+    font-size: 9px;
+    color: var(--muted);
+  }
+
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* ── ANIMATIONS ── */
+  @keyframes fadeDown {
+    from { opacity: 0; transform: translateY(-15px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  @keyframes flow {
+    0%   { left: -10px; opacity: 0; }
+    10%  { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { left: calc(100% + 10px); opacity: 0; }
+  }
+
+  @keyframes stepIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes ping {
+    0%   { transform: scale(1); opacity: 1; }
+    75%  { transform: scale(2.2); opacity: 0; }
+    100% { transform: scale(2.2); opacity: 0; }
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+  }
+
+  @keyframes scanLine {
+    0%   { top: 0; opacity: 0.6; }
+    100% { top: 100%; opacity: 0; }
+  }
+
+  @keyframes glow-pulse {
+    0%, 100% { box-shadow: 0 0 6px currentColor; }
+    50% { box-shadow: 0 0 18px currentColor; }
+  }
+
+  .float { animation: float 3s ease-in-out infinite; }
+
+  .step-enter { animation: stepIn 0.4s ease forwards; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <header>
+    <h1>AKS <span>Workload Identity</span> + CSI Secret Store Flow</h1>
+    <p>How pods access Azure Key Vault secrets via Service Account bridge &amp; CSI DaemonSet</p>
+  </header>
+
+  <div class="diagram">
+
+    <!-- ── CARD 1: Azure Identity ── -->
+    <div class="card azure" id="c1" style="animation-delay:0.1s">
+      <div class="card-title">
+        <div class="icon" style="background:rgba(0,120,212,0.15);">☁️</div>
+        Azure Identity Plane
+        <span class="badge" style="background:rgba(0,120,212,0.15);color:var(--azure-light);border:1px solid rgba(0,120,212,0.4);">AZURE</span>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="pill azure" id="p-aad">
+          <span>🏢</span> Azure AD / Entra ID
+        </div>
+        <div style="padding-left:14px;display:flex;flex-direction:column;gap:4px;">
+          <div class="pill azure" id="p-mi">
+            <span>🪪</span> Managed Identity (MI)
+          </div>
+          <div class="pill azure" id="p-oidc">
+            <span>🔗</span> OIDC Issuer URL
+          </div>
+          <div class="pill azure" id="p-fed">
+            <span>🤝</span> Federated Credential
+          </div>
+        </div>
+        <div class="pill azure" id="p-kv">
+          <span>🔑</span> Key Vault
+        </div>
+        <div style="padding-left:14px;display:flex;flex-direction:column;gap:4px;">
+          <div class="pill green" id="p-s1"><span>🔒</span> secret/db-password</div>
+          <div class="pill green" id="p-s2"><span>🔒</span> secret/api-key</div>
+          <div class="pill green" id="p-s3"><span>🔒</span> cert/tls-cert</div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;padding:8px;background:rgba(0,120,212,0.06);border-radius:8px;border:1px solid rgba(0,120,212,0.15);font-size:9px;color:var(--muted);line-height:1.6">
+        <strong style="color:var(--azure-light)">RBAC Policy:</strong><br>
+        MI → Key Vault <span style="color:var(--green)">Secrets User</span> role<br>
+        scoped to Key Vault resource
+      </div>
+    </div>
+
+    <!-- ── CARD 2: K8s / AKS Cluster ── -->
+    <div class="card k8s" id="c2" style="animation-delay:0.25s">
+      <div class="card-title">
+        <div class="icon" style="background:rgba(50,108,229,0.15);">⚙️</div>
+        AKS Cluster
+        <span class="badge" style="background:rgba(50,108,229,0.15);color:var(--k8s-light);border:1px solid rgba(50,108,229,0.4);">KUBERNETES</span>
+      </div>
+
+      <!-- Service Account -->
+      <div style="border:1.5px solid rgba(50,108,229,0.4);border-radius:8px;padding:10px;margin-bottom:10px;position:relative">
+        <div style="position:absolute;top:-8px;left:8px;background:var(--surface);padding:0 5px;font-size:8px;color:var(--k8s-light);letter-spacing:1px;font-weight:600">SERVICE ACCOUNT</div>
+        <div class="pill k8s" id="p-sa" style="margin:0;width:100%;justify-content:center">
+          <span>🎫</span> workload-sa
+        </div>
+        <div style="font-size:8px;color:var(--muted);margin-top:6px;line-height:1.7;padding:0 4px">
+          <span style="color:var(--k8s-light)">annotation:</span><br>
+          <span style="color:var(--yellow)">azure.workload.identity/client-id:</span><br>
+          <span style="color:var(--green); padding-left:8px">&lt;MI-client-id&gt;</span>
+        </div>
+      </div>
+
+      <!-- SecretProviderClass -->
+      <div class="spc-yaml">
+        <div style="color:var(--muted);font-size:8px;margin-bottom:4px;letter-spacing:1px">SECRET PROVIDER CLASS</div>
+        <span class="y-key">kind: </span><span class="y-type">SecretProviderClass</span><br>
+        <span class="y-key">spec:</span><br>
+        <span style="padding-left:8px" class="y-key">provider: </span><span class="y-val">azure</span><br>
+        <span style="padding-left:8px" class="y-key">parameters:</span><br>
+        <span style="padding-left:16px" class="y-key">keyvaultName: </span><span class="y-str">my-kv</span><br>
+        <span style="padding-left:16px" class="y-key">tenantId: </span><span class="y-str">xxxx</span><br>
+        <span style="padding-left:16px" class="y-key">objects: </span><span class="y-com">|</span><br>
+        <span style="padding-left:24px" class="y-com">- objectName: db-password</span><br>
+        <span style="padding-left:24px" class="y-com">- objectName: api-key</span>
+      </div>
+    </div>
+
+    <!-- ── CARD 3: CSI DaemonSet ── -->
+    <div class="card" id="c3" style="animation-delay:0.4s;border-color:rgba(255,140,66,0.3)">
+      <div class="card-title">
+        <div class="icon" style="background:rgba(255,140,66,0.15);">🔌</div>
+        CSI Secret Store Driver
+        <span class="badge" style="background:rgba(255,140,66,0.15);color:var(--orange);border:1px solid rgba(255,140,66,0.4);">DAEMONSET</span>
+      </div>
+
+      <div style="font-size:9px;color:var(--muted);margin-bottom:8px;line-height:1.6">
+        Runs a pod on <strong style="color:var(--orange)">every node</strong> — intercepts volume mount requests
+      </div>
+
+      <div class="ds-nodes">
+        <div class="ds-node" id="node1">
+          <span class="node-icon">🖥️</span>
+          node-1
+          <div class="node-pod">csi-pod</div>
+        </div>
+        <div class="ds-node" id="node2">
+          <span class="node-icon">🖥️</span>
+          node-2
+          <div class="node-pod">csi-pod</div>
+        </div>
+        <div class="ds-node" id="node3">
+          <span class="node-icon">🖥️</span>
+          node-3
+          <div class="node-pod">csi-pod</div>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;font-size:9px;color:var(--muted);line-height:1.6;padding:8px;background:rgba(255,140,66,0.05);border-radius:6px;border:1px solid rgba(255,140,66,0.15)">
+        <strong style="color:var(--orange)">Driver:</strong> secrets-store.csi.k8s.io<br>
+        <strong style="color:var(--orange)">Provider:</strong> Azure Key Vault Provider<br>
+        <strong style="color:var(--orange)">Mount:</strong> <span style="color:var(--purple)">/mnt/secrets-store</span>
+      </div>
+
+      <div style="margin-top:8px;">
+        <div class="pill orange"><span>🪪</span> Uses SA token via Workload Identity</div>
+        <div class="pill orange"><span>🔄</span> Handles token refresh automatically</div>
+      </div>
+    </div>
+
+    <!-- ── CARD 4: Application Pod ── -->
+    <div class="card k8s" id="c4" style="animation-delay:0.55s;grid-column:1/3">
+      <div class="card-title">
+        <div class="icon" style="background:rgba(50,108,229,0.15);">📦</div>
+        Application Pod
+        <span class="badge" style="background:rgba(176,108,255,0.15);color:var(--purple);border:1px solid rgba(176,108,255,0.4);">WORKLOAD</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <!-- Pod spec side -->
+        <div>
+          <div style="font-size:8px;color:var(--muted);margin-bottom:6px;letter-spacing:1px">POD SPEC</div>
+          <div class="spc-yaml">
+            <span class="y-key">serviceAccountName: </span><span class="y-str">workload-sa</span><br>
+            <span class="y-key">labels:</span><br>
+            <span style="padding-left:8px" class="y-key">azure.workload.identity</span><br>
+            <span style="padding-left:16px" class="y-key">/use: </span><span class="y-val">"true"</span><br>
+            <span class="y-key">volumes:</span><br>
+            <span style="padding-left:8px" class="y-com">- name: secrets-vol</span><br>
+            <span style="padding-left:10px" class="y-com">csi:</span><br>
+            <span style="padding-left:12px" class="y-key">driver: </span><span class="y-val">secrets-store.csi</span><br>
+            <span style="padding-left:12px" class="y-key">readOnly: </span><span class="y-val">true</span>
+          </div>
+        </div>
+
+        <!-- Pod visual side -->
+        <div>
+          <div style="font-size:8px;color:var(--muted);margin-bottom:6px;letter-spacing:1px">RUNTIME VIEW</div>
+          <div class="pod-box" id="pod-visual">
+            <div class="pod-label">POD</div>
+            <div class="pod-internals">
+              <div class="pill k8s" style="margin:0;font-size:9px"><span>🎫</span> SA: workload-sa</div>
+              <div class="pill purple" style="margin:0;font-size:9px" id="token-pill"><span>🎟️</span> Projected SA Token</div>
+              <div style="border:1px dashed rgba(176,108,255,0.4);border-radius:6px;padding:6px;margin-top:2px">
+                <div style="font-size:8px;color:var(--purple);margin-bottom:4px;font-weight:600">📁 /mnt/secrets-store/</div>
+                <div class="volume-mount" id="vm1"><span>📄</span> db-password</div>
+                <div class="volume-mount" id="vm2"><span>📄</span> api-key</div>
+              </div>
+              <div style="font-size:8px;color:var(--muted);margin-top:2px">
+                App reads: <span style="color:var(--green)">os.env / file path</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CARD 5: Identity Bridge ── -->
+    <div class="card" id="c5" style="animation-delay:0.7s;border-color:rgba(255,209,102,0.3)">
+      <div class="card-title">
+        <div class="icon" style="background:rgba(255,209,102,0.12);">🌉</div>
+        Workload Identity Bridge
+        <span class="badge" style="background:rgba(255,209,102,0.12);color:var(--yellow);border:1px solid rgba(255,209,102,0.3);">WEBHOOK</span>
+      </div>
+      <div style="font-size:9px;color:var(--muted);line-height:1.8">
+        <div style="margin-bottom:8px;padding:6px 8px;background:rgba(255,209,102,0.05);border-radius:6px;border:1px solid rgba(255,209,102,0.15)">
+          <strong style="color:var(--yellow)">Mutating Webhook</strong><br>
+          Intercepts pod creation &amp; injects:
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div class="pill yellow"><span>🔑</span> AZURE_CLIENT_ID env</div>
+          <div class="pill yellow"><span>🌐</span> AZURE_TENANT_ID env</div>
+          <div class="pill yellow"><span>📁</span> Token volume mount</div>
+          <div class="pill yellow"><span>🔄</span> OIDC token refresh</div>
+        </div>
+        <div style="margin-top:8px;font-size:8px;color:var(--muted);line-height:1.6">
+          SA token <span style="color:var(--yellow)">↔</span> MI token exchange<br>
+          via Azure AD OIDC federation
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ANIMATED FLOW ── -->
+    <div class="flow-section" id="flow-section">
+      <div class="flow-title">📡 End-to-End Authentication &amp; Secret Mount Flow</div>
+      <div class="steps" id="steps-container">
+
+        <div class="step" id="step1">
+          <div class="step-num" style="color:var(--k8s-light);border-color:var(--k8s-light)">1</div>
+          <div class="step-label"><strong>Pod Scheduled</strong>Pod with SA label created on node</div>
+        </div>
+        <div class="connector">
+          <div class="connector-line"></div>
+          <div class="connector-pulse" id="cp1" style="background:var(--k8s-light)"></div>
+        </div>
+
+        <div class="step" id="step2">
+          <div class="step-num" style="color:var(--yellow);border-color:var(--yellow)">2</div>
+          <div class="step-label"><strong>Webhook Injects</strong>MI env vars + OIDC token volume</div>
+        </div>
+        <div class="connector">
+          <div class="connector-line"></div>
+          <div class="connector-pulse" id="cp2" style="background:var(--yellow)"></div>
+        </div>
+
+        <div class="step" id="step3">
+          <div class="step-num" style="color:var(--purple);border-color:var(--purple)">3</div>
+          <div class="step-label"><strong>CSI Driver</strong>DaemonSet detects volume mount request</div>
+        </div>
+        <div class="connector">
+          <div class="connector-line"></div>
+          <div class="connector-pulse" id="cp3" style="background:var(--purple)"></div>
+        </div>
+
+        <div class="step" id="step4">
+          <div class="step-num" style="color:var(--azure-light);border-color:var(--azure-light)">4</div>
+          <div class="step-label"><strong>Token Exchange</strong>SA JWT → Azure AD OIDC → MI token</div>
+        </div>
+        <div class="connector">
+          <div class="connector-line"></div>
+          <div class="connector-pulse" id="cp4" style="background:var(--azure-light)"></div>
+        </div>
+
+        <div class="step" id="step5">
+          <div class="step-num" style="color:var(--orange);border-color:var(--orange)">5</div>
+          <div class="step-label"><strong>KV Auth</strong>MI token used to auth against Key Vault</div>
+        </div>
+        <div class="connector">
+          <div class="connector-line"></div>
+          <div class="connector-pulse" id="cp5" style="background:var(--orange)"></div>
+        </div>
+
+        <div class="step" id="step6">
+          <div class="step-num" style="color:var(--green);border-color:var(--green)">6</div>
+          <div class="step-label"><strong>Secrets Fetched</strong>Secrets written to tmpfs volume</div>
+        </div>
+        <div class="connector">
+          <div class="connector-line"></div>
+          <div class="connector-pulse" id="cp6" style="background:var(--green)"></div>
+        </div>
+
+        <div class="step" id="step7">
+          <div class="step-num" style="color:var(--green);border-color:var(--green)">7</div>
+          <div class="step-label"><strong>Pod Starts</strong>App reads secrets from /mnt/secrets-store</div>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- end .diagram -->
+
+  <!-- Status Bar -->
+  <div class="status-bar">
+    <div class="status-item">
+      <div class="status-dot" style="background:var(--green);"></div>
+      <span>CSI DaemonSet: Running</span>
+    </div>
+    <div class="status-item">
+      <div class="status-dot" style="background:var(--azure-light);animation-delay:0.3s"></div>
+      <span>Workload Identity: Active</span>
+    </div>
+    <div class="status-item">
+      <div class="status-dot" style="background:var(--yellow);animation-delay:0.6s"></div>
+      <span>OIDC Federation: Configured</span>
+    </div>
+    <div class="status-item">
+      <div class="status-dot" style="background:var(--purple);animation-delay:0.9s"></div>
+      <span>Secrets: Mounted (tmpfs)</span>
+    </div>
+    <div class="status-item" style="margin-left:auto">
+      <span style="color:var(--muted)">No credentials in pod spec ✓</span>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--azure-light)"></div>Azure / Entra ID</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--k8s-light)"></div>Kubernetes Resource</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--orange)"></div>CSI DaemonSet</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--yellow)"></div>Workload Identity Webhook</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Secret / Vault</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--purple)"></div>Volume Mount</div>
+  </div>
+
+</div><!-- end .wrapper -->
+
+<script>
+// ── CARD ENTRANCE ──
+const cards = ['c1','c2','c3','c4','c5'].map((id,i) => {
+  const el = document.getElementById(id);
+  setTimeout(() => { el.style.animation = `cardIn 0.6s ease ${i*0.15}s forwards`; }, 10);
+  return el;
+});
+
+document.getElementById('flow-section').classList.add('show');
+
+// ── STEP ANIMATION SEQUENCE ──
+const totalSteps = 7;
+let currentStep = 0;
+let animRunning = false;
+
+function highlightStep(n) {
+  for (let i = 1; i <= totalSteps; i++) {
+    const el = document.getElementById(`step${i}`);
+    if (!el) continue;
+    const num = el.querySelector('.step-num');
+    if (i < n) {
+      num.style.opacity = '0.35';
+      num.classList.remove('active');
+    } else if (i === n) {
+      num.classList.add('active');
+      el.style.opacity = '1';
+    } else {
+      num.style.opacity = '0.35';
+      num.classList.remove('active');
+    }
+  }
+}
+
+function fireConnector(n) {
+  const cp = document.getElementById(`cp${n}`);
+  if (!cp) return;
+  cp.style.animation = 'none';
+  cp.style.opacity = '0';
+  void cp.offsetWidth;
+  cp.style.animation = `flow 0.9s ease forwards`;
+}
+
+function animateCards() {
+  // pulse card borders based on step
+  const stepCardMap = {1:'c4', 2:'c5', 3:'c3', 4:'c1', 5:'c1', 6:'c2', 7:'c4'};
+  Object.values(stepCardMap).forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('pulse');
+  });
+  const active = stepCardMap[currentStep + 1];
+  if (active) {
+    const el = document.getElementById(active);
+    if (el) el.classList.add('pulse');
+  }
+}
+
+function runStep() {
+  currentStep = (currentStep % totalSteps) + 1;
+  highlightStep(currentStep);
+  if (currentStep < totalSteps) fireConnector(currentStep);
+  animateCards();
+
+  // Special effects per step
+  if (currentStep === 2) {
+    document.getElementById('token-pill').classList.add('active');
+  } else {
+    document.getElementById('token-pill').classList.remove('active');
+  }
+
+  if (currentStep >= 6) {
+    document.getElementById('vm1').style.animation = 'glow-pulse 1s ease 2';
+    document.getElementById('vm2').style.animation = 'glow-pulse 1s ease 2 0.15s';
+    ['p-s1','p-s2','p-s3'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('active');
+    });
+  } else {
+    ['p-s1','p-s2','p-s3'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('active');
+    });
+    document.getElementById('vm1').style.animation = '';
+    document.getElementById('vm2').style.animation = '';
+  }
+}
+
+// Reveal steps with stagger
+for (let i = 1; i <= totalSteps; i++) {
+  const el = document.getElementById(`step${i}`);
+  if (el) {
+    el.style.opacity = '0';
+    setTimeout(() => {
+      el.style.animation = `stepIn 0.4s ease ${(i-1)*0.1 + 1}s forwards`;
+    }, 10);
+  }
+}
+
+// Start step loop
+setTimeout(() => {
+  runStep();
+  setInterval(runStep, 1800);
+}, 1500);
+
+// Highlight cards on entrance
+setTimeout(() => {
+  ['c1','c2','c3','c4','c5'].forEach(id => {
+    const el = document.getElementById(id);
+    el.classList.add('pulse');
+    setTimeout(() => el.classList.remove('pulse'), 1200);
+  });
+}, 200);
+</script>
+</body>
+</html>
