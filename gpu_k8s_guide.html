@@ -1,0 +1,1317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPU on Kubernetes — Architecture Guide</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #111318;
+    --surface2: #181c24;
+    --border: rgba(255,255,255,0.07);
+    --border-bright: rgba(255,255,255,0.15);
+    --text: #e8eaf0;
+    --text-muted: #6b7280;
+    --text-dim: #374151;
+    --purple: #8b5cf6;
+    --purple-light: #a78bfa;
+    --purple-dim: rgba(139,92,246,0.12);
+    --teal: #14b8a6;
+    --teal-dim: rgba(20,184,166,0.12);
+    --amber: #f59e0b;
+    --amber-dim: rgba(245,158,11,0.12);
+    --blue: #3b82f6;
+    --blue-dim: rgba(59,130,246,0.12);
+    --green: #22c55e;
+    --green-dim: rgba(34,197,94,0.12);
+    --coral: #f97316;
+    --coral-dim: rgba(249,115,22,0.12);
+    --red: #ef4444;
+    --red-dim: rgba(239,68,68,0.12);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .page-wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+  }
+
+  /* Header */
+  header {
+    margin-bottom: 56px;
+    border-left: 3px solid var(--purple);
+    padding-left: 20px;
+  }
+
+  header .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--purple-light);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  header h1 {
+    font-size: clamp(28px, 5vw, 48px);
+    font-weight: 800;
+    line-height: 1.1;
+    color: var(--text);
+    margin-bottom: 12px;
+  }
+
+  header p {
+    font-size: 15px;
+    color: var(--text-muted);
+    font-weight: 400;
+    max-width: 520px;
+    line-height: 1.6;
+  }
+
+  .hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .hint-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--purple);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+  }
+
+  /* Layer sections */
+  .layer {
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .layer-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .layer-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 7px;
+    letter-spacing: 0.05em;
+  }
+
+  .layer-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .layer-body {
+    padding: 16px 20px;
+    background: var(--surface);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  /* Connector between layers */
+  .connector {
+    display: flex;
+    justify-content: center;
+    padding: 4px 0;
+  }
+
+  .connector-line {
+    width: 1px;
+    height: 24px;
+    background: linear-gradient(to bottom, var(--border-bright), transparent);
+    position: relative;
+  }
+
+  /* Component cards */
+  .card {
+    position: relative;
+    border-radius: 8px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    border: 1px solid transparent;
+    flex: 1;
+    min-width: 160px;
+    max-width: 280px;
+  }
+
+  .card:hover {
+    transform: translateY(-2px);
+    border-color: var(--card-accent) !important;
+    box-shadow: 0 0 20px -4px var(--card-glow);
+  }
+
+  .card:active { transform: translateY(0); }
+
+  .card-icon {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    margin-bottom: 10px;
+    background: rgba(255,255,255,0.05);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    color: var(--card-accent);
+  }
+
+  .card-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+    line-height: 1.3;
+  }
+
+  .card-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .card-arrow {
+    position: absolute;
+    top: 12px; right: 12px;
+    font-size: 10px;
+    color: var(--text-dim);
+    opacity: 0;
+    transition: opacity 0.18s, transform 0.18s;
+  }
+
+  .card:hover .card-arrow { opacity: 1; transform: translate(2px, -2px); }
+
+  /* Color variants */
+  .c-purple { --card-accent: var(--purple); --card-glow: rgba(139,92,246,0.3); background: var(--purple-dim); border-color: rgba(139,92,246,0.2); }
+  .c-teal   { --card-accent: var(--teal);   --card-glow: rgba(20,184,166,0.3);  background: var(--teal-dim);   border-color: rgba(20,184,166,0.2); }
+  .c-amber  { --card-accent: var(--amber);  --card-glow: rgba(245,158,11,0.3);  background: var(--amber-dim);  border-color: rgba(245,158,11,0.2); }
+  .c-blue   { --card-accent: var(--blue);   --card-glow: rgba(59,130,246,0.3);  background: var(--blue-dim);   border-color: rgba(59,130,246,0.2); }
+  .c-green  { --card-accent: var(--green);  --card-glow: rgba(34,197,94,0.3);   background: var(--green-dim);  border-color: rgba(34,197,94,0.2); }
+  .c-coral  { --card-accent: var(--coral);  --card-glow: rgba(249,115,22,0.3);  background: var(--coral-dim);  border-color: rgba(249,115,22,0.2); }
+  .c-gray   { --card-accent: #9ca3af;       --card-glow: rgba(156,163,175,0.2); background: var(--surface2);   border-color: var(--border); }
+
+  /* Wide card */
+  .card-wide { max-width: 100%; flex: 1 1 100%; }
+
+  /* ── MODAL ── */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(6px);
+    z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+
+  .modal-backdrop.open { opacity: 1; pointer-events: all; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border-bright);
+    border-radius: 14px;
+    width: 100%;
+    max-width: 680px;
+    max-height: 85vh;
+    overflow-y: auto;
+    transform: translateY(16px) scale(0.98);
+    transition: transform 0.22s ease;
+    position: relative;
+  }
+
+  .modal-backdrop.open .modal { transform: translateY(0) scale(1); }
+
+  .modal-top {
+    padding: 28px 28px 20px;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0;
+    background: var(--surface);
+    z-index: 2;
+    display: flex; align-items: flex-start; gap: 14px;
+  }
+
+  .modal-badge {
+    width: 40px; height: 40px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700; font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .modal-titles { flex: 1; }
+
+  .modal-layer {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .modal-title {
+    font-size: 20px; font-weight: 800;
+    color: var(--text); line-height: 1.2;
+  }
+
+  .modal-close {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+
+  .modal-close:hover { background: var(--border); color: var(--text); }
+
+  .modal-body { padding: 24px 28px 28px; }
+
+  .modal-body p {
+    font-size: 14px; line-height: 1.75;
+    color: #c4c8d4; margin-bottom: 16px; font-weight: 400;
+  }
+
+  .modal-body p:last-child { margin-bottom: 0; }
+
+  .modal-section {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+
+  .modal-section-title {
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-dim); margin-bottom: 12px;
+  }
+
+  .code-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: #a5f3fc;
+    overflow-x: auto;
+    margin-bottom: 12px;
+    white-space: pre;
+  }
+
+  .code-block .comment { color: #4b5563; }
+  .code-block .key { color: #86efac; }
+  .code-block .val { color: #fbbf24; }
+  .code-block .cmd { color: #c4b5fd; }
+
+  .tag-row {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;
+  }
+
+  .tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+
+  .dep-list {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+
+  .dep-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+
+  .dep-dot {
+    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  }
+
+  .warn-box {
+    background: rgba(245,158,11,0.08);
+    border: 1px solid rgba(245,158,11,0.25);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #fcd34d;
+    margin-top: 12px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .good-box {
+    background: rgba(34,197,94,0.08);
+    border: 1px solid rgba(34,197,94,0.2);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #86efac;
+    margin-top: 12px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Scrollbar */
+  .modal::-webkit-scrollbar { width: 4px; }
+  .modal::-webkit-scrollbar-track { background: transparent; }
+  .modal::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+
+  /* Layer color accents */
+  .layer[data-layer="1"] .layer-num { color: var(--purple-light); border-color: rgba(139,92,246,0.3); }
+  .layer[data-layer="2"] .layer-num { color: var(--teal); border-color: rgba(20,184,166,0.3); }
+  .layer[data-layer="3"] .layer-num { color: var(--amber); border-color: rgba(245,158,11,0.3); }
+  .layer[data-layer="4"] .layer-num { color: var(--blue); border-color: rgba(59,130,246,0.3); }
+  .layer[data-layer="5"] .layer-num { color: var(--green); border-color: rgba(34,197,94,0.3); }
+  .layer[data-layer="6"] .layer-num { color: var(--coral); border-color: rgba(249,115,22,0.3); }
+
+  @media (max-width: 600px) {
+    .card { min-width: 100%; max-width: 100%; }
+    .modal-body { padding: 20px; }
+    .modal-top { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page-wrap">
+
+  <header>
+    <div class="eyebrow">Infrastructure Architecture</div>
+    <h1>GPU on Kubernetes</h1>
+    <p>End-to-end component guide for setting up NVIDIA GPU worker nodes on an on-premises Kubernetes cluster with CRI-O and RHEL 9.</p>
+    <div class="hint">
+      <span class="hint-dot"></span>
+      Click any component to explore in depth
+    </div>
+  </header>
+
+  <!-- LAYER 1 -->
+  <div class="layer" data-layer="1">
+    <div class="layer-header">
+      <span class="layer-num">LAYER 01</span>
+      <span class="layer-title">Hardware</span>
+    </div>
+    <div class="layer-body">
+      <div class="card c-purple" onclick="openModal('gpu')">
+        <div class="card-icon">GPU</div>
+        <div class="card-title">Physical GPU</div>
+        <div class="card-sub">NVIDIA RTX / A100 / H100<br>CUDA cores + VRAM</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-gray" onclick="openModal('pcie')">
+        <div class="card-icon">BUS</div>
+        <div class="card-title">PCIe Bus</div>
+        <div class="card-sub">Host ↔ GPU link<br>Data transfer channel</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-gray" onclick="openModal('cpu')">
+        <div class="card-icon">CPU</div>
+        <div class="card-title">CPU + Host Memory</div>
+        <div class="card-sub">Orchestrates GPU work<br>Manages data staging</div>
+        <span class="card-arrow">↗</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><div class="connector-line"></div></div>
+
+  <!-- LAYER 2 -->
+  <div class="layer" data-layer="2">
+    <div class="layer-header">
+      <span class="layer-num">LAYER 02</span>
+      <span class="layer-title">OS Kernel + Driver</span>
+    </div>
+    <div class="layer-body">
+      <div class="card c-teal" onclick="openModal('driver')">
+        <div class="card-icon">DRV</div>
+        <div class="card-title">NVIDIA Kernel Driver</div>
+        <div class="card-sub">nvidia.ko + nvidia_uvm.ko<br>Exposes /dev/nvidia*</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-teal" onclick="openModal('devfiles')">
+        <div class="card-icon">/dev</div>
+        <div class="card-title">Device Files</div>
+        <div class="card-sub">/dev/nvidia0<br>/dev/nvidiactl<br>/dev/nvidia-uvm</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-amber" onclick="openModal('modprobe')">
+        <div class="card-icon">SVC</div>
+        <div class="card-title">nvidia-modprobe + systemd</div>
+        <div class="card-sub">Runs before CRI-O<br>Creates /dev/nvidia-uvm</div>
+        <span class="card-arrow">↗</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><div class="connector-line"></div></div>
+
+  <!-- LAYER 3 -->
+  <div class="layer" data-layer="3">
+    <div class="layer-header">
+      <span class="layer-num">LAYER 03</span>
+      <span class="layer-title">Container Runtime</span>
+    </div>
+    <div class="layer-body">
+      <div class="card c-purple" onclick="openModal('toolkit')">
+        <div class="card-icon">NVT</div>
+        <div class="card-title">nvidia-container-toolkit</div>
+        <div class="card-sub">libnvidia-container<br>CDI spec generation</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-teal" onclick="openModal('nvruntime')">
+        <div class="card-icon">RT</div>
+        <div class="card-title">nvidia-container-runtime</div>
+        <div class="card-sub">Wraps crun/runc<br>mode = auto / CDI</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-teal" onclick="openModal('crio')">
+        <div class="card-icon">CRI</div>
+        <div class="card-title">CRI-O</div>
+        <div class="card-sub">default_runtime=nvidia<br>99-nvidia.conf</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-amber" onclick="openModal('cdi')">
+        <div class="card-icon">CDI</div>
+        <div class="card-title">CDI Spec</div>
+        <div class="card-sub">/etc/cdi/nvidia.yaml<br>Device injection map</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-coral" onclick="openModal('selinux')">
+        <div class="card-icon">SEC</div>
+        <div class="card-title">SELinux Policy</div>
+        <div class="card-sub">container_t → kubelet_t<br>audit2allow fix</div>
+        <span class="card-arrow">↗</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><div class="connector-line"></div></div>
+
+  <!-- LAYER 4 -->
+  <div class="layer" data-layer="4">
+    <div class="layer-header">
+      <span class="layer-num">LAYER 04</span>
+      <span class="layer-title">Kubernetes</span>
+    </div>
+    <div class="layer-body">
+      <div class="card c-blue" onclick="openModal('kubelet')">
+        <div class="card-icon">KBL</div>
+        <div class="card-title">kubelet</div>
+        <div class="card-sub">Node agent<br>Device plugin API</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-purple" onclick="openModal('deviceplugin')">
+        <div class="card-icon">DP</div>
+        <div class="card-title">NVIDIA Device Plugin</div>
+        <div class="card-sub">DaemonSet on GPU nodes<br>Advertises nvidia.com/gpu</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-teal" onclick="openModal('runtimeclass')">
+        <div class="card-icon">RC</div>
+        <div class="card-title">RuntimeClass</div>
+        <div class="card-sub">handler: nvidia<br>Routes pod to nvidia RT</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-green card-wide" onclick="openModal('noderesource')">
+        <div class="card-icon">RES</div>
+        <div class="card-title">Node Resource: nvidia.com/gpu = 1</div>
+        <div class="card-sub">Advertised by device plugin · Consumed by pod resource requests</div>
+        <span class="card-arrow">↗</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><div class="connector-line"></div></div>
+
+  <!-- LAYER 5 -->
+  <div class="layer" data-layer="5">
+    <div class="layer-header">
+      <span class="layer-num">LAYER 05</span>
+      <span class="layer-title">GPU Workload Pod</span>
+    </div>
+    <div class="layer-body">
+      <div class="card c-blue" onclick="openModal('podspec')">
+        <div class="card-icon">POD</div>
+        <div class="card-title">GPU Pod Spec</div>
+        <div class="card-sub">nvidia.com/gpu: 1<br>CUDA env vars</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-purple" onclick="openModal('cuda')">
+        <div class="card-icon">CDA</div>
+        <div class="card-title">CUDA Runtime</div>
+        <div class="card-sub">libcuda.so injected<br>Talks to /dev/nvidia0</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-green" onclick="openModal('workloads')">
+        <div class="card-icon">WL</div>
+        <div class="card-title">Workload Types</div>
+        <div class="card-sub">ML training / inference<br>HPC / rendering</div>
+        <span class="card-arrow">↗</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><div class="connector-line"></div></div>
+
+  <!-- LAYER 6 -->
+  <div class="layer" data-layer="6">
+    <div class="layer-header">
+      <span class="layer-num">LAYER 06</span>
+      <span class="layer-title">Scheduling Flow</span>
+    </div>
+    <div class="layer-body">
+      <div class="card c-coral" onclick="openModal('scheduler')">
+        <div class="card-icon">SCH</div>
+        <div class="card-title">kube-scheduler</div>
+        <div class="card-sub">Filters nodes<br>nvidia.com/gpu ≥ 1</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-amber" onclick="openModal('affinity')">
+        <div class="card-icon">AFF</div>
+        <div class="card-title">Node Affinity</div>
+        <div class="card-sub">nodeSelector / tolerations<br>GPU taint handling</div>
+        <span class="card-arrow">↗</span>
+      </div>
+      <div class="card c-green" onclick="openModal('bound')">
+        <div class="card-icon">OK</div>
+        <div class="card-title">Pod Bound to GPU Node</div>
+        <div class="card-sub">CRI-O creates container<br>GPU mounted via CDI</div>
+        <span class="card-arrow">↗</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- MODAL -->
+<div class="modal-backdrop" id="backdrop" onclick="handleBackdropClick(event)">
+  <div class="modal" id="modal">
+    <div class="modal-top">
+      <div class="modal-badge" id="modal-badge"></div>
+      <div class="modal-titles">
+        <div class="modal-layer" id="modal-layer"></div>
+        <div class="modal-title" id="modal-title"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+const data = {
+  gpu: {
+    title: "Physical GPU",
+    layer: "Layer 1 — Hardware",
+    badge: "GPU", badgeColor: "#8b5cf6", badgeBg: "rgba(139,92,246,0.15)",
+    body: `
+      <p>The physical NVIDIA GPU is the foundation of the entire stack. Without it detected and accessible at the hardware level, nothing else works. On-premises clusters typically use server-grade cards like the A100, H100, or workstation-grade cards like the RTX 2080 Ti.</p>
+      <p>The GPU connects to the host system over a PCIe slot. The OS must detect it before any driver or software can use it. Always verify hardware presence first when debugging GPU issues.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Verify GPU is detected</div>
+        <div class="code-block"><span class="cmd">lspci</span> | grep -i nvidia
+<span class="comment"># Expected output:</span>
+02:00.0 VGA compatible controller: NVIDIA Corporation
+        TU102 [GeForce RTX 2080 Ti]</div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Key specs that matter for Kubernetes</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#8b5cf6"></span>VRAM — determines max model/batch size per pod</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#8b5cf6"></span>CUDA compute capability — determines supported ops</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#8b5cf6"></span>PCIe bandwidth — affects data transfer speed to host</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#8b5cf6"></span>MIG support (A100/H100) — enables GPU partitioning</div>
+        </div>
+      </div>
+      <div class="warn-box">If lspci shows no NVIDIA entry, check BIOS settings — the slot may be disabled or the card may be unseated.</div>`
+  },
+
+  pcie: {
+    title: "PCIe Bus",
+    layer: "Layer 1 — Hardware",
+    badge: "BUS", badgeColor: "#9ca3af", badgeBg: "rgba(156,163,175,0.1)",
+    body: `
+      <p>The PCIe (Peripheral Component Interconnect Express) bus is the high-speed serial link connecting the GPU to the host CPU and memory. For GPU workloads, PCIe bandwidth directly affects how fast data can be moved between host RAM and GPU VRAM.</p>
+      <p>Modern GPUs use PCIe 4.0 x16 or PCIe 5.0 x16. A GPU in a x4 or x8 slot, or a PCIe 3.0 slot, will have reduced bandwidth which can bottleneck data-heavy training workloads.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Check PCIe link speed</div>
+        <div class="code-block"><span class="cmd">lspci</span> -vv -s 02:00.0 | grep -i "lnk\|speed\|width"
+<span class="comment"># Look for:</span>
+LnkCap: Speed 16GT/s (ok), Width x16 (ok)
+LnkSta: Speed 8GT/s (ok), Width x16 (ok)</div>
+      </div>
+      <div class="warn-box">LnkSta speed lower than LnkCap means the slot or cable is limiting bandwidth. For A100/H100 workloads this can be a significant bottleneck.</div>`
+  },
+
+  cpu: {
+    title: "CPU + Host Memory",
+    layer: "Layer 1 — Hardware",
+    badge: "CPU", badgeColor: "#9ca3af", badgeBg: "rgba(156,163,175,0.1)",
+    body: `
+      <p>The host CPU and RAM coordinate GPU work. The CPU runs the Kubernetes control plane components (kubelet, CRI-O, device plugin), manages the container lifecycle, and handles data preprocessing before sending workloads to the GPU.</p>
+      <p>For GPU nodes, ensure sufficient CPU cores and RAM to support the container runtime overhead plus the data pipelines feeding the GPU. A GPU node starved of CPU or RAM will see the GPU idle while waiting for data.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Recommended baseline per GPU</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#9ca3af"></span>8+ CPU cores dedicated to GPU workload pods</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#9ca3af"></span>32 GB+ RAM per GPU (more for large model loading)</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#9ca3af"></span>NVMe SSD for fast dataset loading</div>
+        </div>
+      </div>`
+  },
+
+  driver: {
+    title: "NVIDIA Kernel Driver",
+    layer: "Layer 2 — OS Kernel + Driver",
+    badge: "DRV", badgeColor: "#14b8a6", badgeBg: "rgba(20,184,166,0.15)",
+    body: `
+      <p>The NVIDIA kernel driver is the most fundamental software component. It bridges the physical GPU hardware and the OS. Without it, no software — including containers — can access the GPU.</p>
+      <p>On AlmaLinux / RHEL 9, the driver installs as kernel modules: <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia.ko</code>, <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia_uvm.ko</code>, <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia_modeset.ko</code>, and <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia_drm.ko</code>. These load at boot and expose the GPU as device files under /dev.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Installation on AlmaLinux 9</div>
+        <div class="code-block"><span class="comment"># 1. Enable repos</span>
+<span class="cmd">dnf install</span> -y epel-release
+<span class="cmd">dnf config-manager</span> --set-enabled crb
+<span class="cmd">dnf config-manager</span> --add-repo=https://developer.download.nvidia.com/\
+  compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo
+
+<span class="comment"># 2. Install kernel headers + driver</span>
+<span class="cmd">dnf install</span> -y kernel-devel-$(uname -r) kernel-headers-$(uname -r)
+<span class="cmd">dnf install</span> -y nvidia-driver nvidia-driver-cuda
+
+<span class="comment"># 3. Disable Nouveau</span>
+echo "blacklist nouveau" >> /etc/modprobe.d/blacklist-nouveau.conf
+<span class="cmd">dracut</span> --force
+
+<span class="comment"># 4. Reboot then verify</span>
+<span class="cmd">nvidia-smi</span>
+<span class="cmd">lsmod</span> | grep nvidia</div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Common installation issues</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#ef4444"></span>nvidia-smi missing → install nvidia-driver-cuda separately</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#ef4444"></span>Secure Boot enabled → driver module won't load, disable in BIOS</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#ef4444"></span>Kernel mismatch → reinstall kernel-devel matching uname -r</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f59e0b"></span>Driver installed but nvidia-smi fails → reboot required</div>
+        </div>
+      </div>
+      <div class="good-box">After successful install: nvidia-smi shows GPU model, driver version (e.g. 595.45.04), and CUDA version (e.g. 13.2).</div>`
+  },
+
+  devfiles: {
+    title: "Device Files",
+    layer: "Layer 2 — OS Kernel + Driver",
+    badge: "/dev", badgeColor: "#14b8a6", badgeBg: "rgba(20,184,166,0.15)",
+    body: `
+      <p>When the NVIDIA kernel modules load, they create character device files under <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">/dev/</code>. These are the actual kernel interfaces that both userspace and containers use to communicate with the GPU hardware.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Device file reference</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#14b8a6"></span><strong>/dev/nvidia0</strong> — the primary GPU device, one per GPU</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#14b8a6"></span><strong>/dev/nvidiactl</strong> — control channel, always required</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f59e0b"></span><strong>/dev/nvidia-uvm</strong> — Unified Virtual Memory, required for CUDA</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#14b8a6"></span><strong>/dev/nvidia-modeset</strong> — display mode setting, less critical for compute</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#14b8a6"></span><strong>/dev/nvidia-uvm-tools</strong> — UVM profiling tools</div>
+        </div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Verify all devices exist</div>
+        <div class="code-block"><span class="cmd">ls</span> -la /dev/nvidia*
+<span class="comment"># Must see all of:</span>
+crw-rw-rw. 195,   0  /dev/nvidia0
+crw-rw-rw. 195, 255  /dev/nvidiactl
+crw-rw-rw. 195, 254  /dev/nvidia-modeset
+crw-rw-rw. 237,   0  /dev/nvidia-uvm
+crw-rw-rw. 237,   1  /dev/nvidia-uvm-tools</div>
+      </div>
+      <div class="warn-box">On RHEL 9, /dev/nvidia-uvm is NOT created automatically at boot. It requires nvidia-modprobe to run first. This was the root cause of the CDI injection failure after reboot in this setup.</div>`
+  },
+
+  modprobe: {
+    title: "nvidia-modprobe + systemd service",
+    layer: "Layer 2 — OS Kernel + Driver",
+    badge: "SVC", badgeColor: "#f59e0b", badgeBg: "rgba(245,158,11,0.15)",
+    body: `
+      <p>On RHEL 9, the <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">/dev/nvidia-uvm</code> device file is not created automatically at boot. It needs <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia-modprobe -u -c 0</code> to run first. Without this, CDI spec injection fails with "no such file or directory".</p>
+      <p>The solution is a systemd oneshot service that runs before CRI-O starts, ensuring all device files exist and the CDI spec is regenerated with current device paths before any container runtime starts.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Create the systemd service</div>
+        <div class="code-block">cat > /etc/systemd/system/nvidia-dev-init.service &lt;&lt; 'EOF'
+[Unit]
+<span class="key">Description</span>=<span class="val">NVIDIA device file initialization</span>
+<span class="key">Before</span>=<span class="val">crio.service</span>
+<span class="key">After</span>=<span class="val">systemd-udev-settle.service</span>
+
+[Service]
+<span class="key">Type</span>=<span class="val">oneshot</span>
+<span class="key">ExecStart</span>=<span class="val">/usr/bin/nvidia-modprobe -u -c 0</span>
+<span class="key">ExecStartPost</span>=<span class="val">/usr/bin/nvidia-ctk cdi generate \
+  --output=/etc/cdi/nvidia.yaml</span>
+<span class="key">RemainAfterExit</span>=<span class="val">yes</span>
+
+[Install]
+<span class="key">WantedBy</span>=<span class="val">multi-user.target</span>
+EOF
+
+<span class="cmd">systemctl</span> daemon-reload
+<span class="cmd">systemctl</span> enable nvidia-dev-init.service
+<span class="cmd">systemctl</span> start nvidia-dev-init.service</div>
+      </div>
+      <div class="good-box">This service is persistent across reboots. It runs before CRI-O on every boot, ensuring /dev/nvidia-uvm exists and the CDI spec is always fresh.</div>`
+  },
+
+  toolkit: {
+    title: "nvidia-container-toolkit",
+    layer: "Layer 3 — Container Runtime",
+    badge: "NVT", badgeColor: "#8b5cf6", badgeBg: "rgba(139,92,246,0.15)",
+    body: `
+      <p>The nvidia-container-toolkit is the bridge between the NVIDIA driver on the host and containers running in Kubernetes. It injects the GPU device files and CUDA libraries into containers at runtime, without baking them into the container image.</p>
+      <p>It installs four packages: <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">libnvidia-container1</code>, <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">libnvidia-container-tools</code>, <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia-container-toolkit-base</code>, and <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia-container-toolkit</code>.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Install on AlmaLinux 9</div>
+        <div class="code-block"><span class="cmd">dnf install</span> -y nvidia-container-toolkit
+
+<span class="comment"># Verify packages</span>
+<span class="cmd">rpm</span> -qa | grep nvidia-container
+<span class="comment"># nvidia-container-toolkit-1.19.0-1.x86_64</span>
+<span class="comment"># nvidia-container-toolkit-base-1.19.0-1.x86_64</span>
+<span class="comment"># libnvidia-container1-1.19.0-1.x86_64</span>
+<span class="comment"># libnvidia-container-tools-1.19.0-1.x86_64</span></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Key binaries installed</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#8b5cf6"></span>/usr/bin/nvidia-container-runtime — OCI runtime wrapper</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#8b5cf6"></span>/usr/bin/nvidia-container-runtime-hook — prestart hook (legacy mode)</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#8b5cf6"></span>/usr/bin/nvidia-ctk — CLI for CDI, config, system setup</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#8b5cf6"></span>/usr/bin/nvidia-container-cli — low-level container GPU config</div>
+        </div>
+      </div>`
+  },
+
+  nvruntime: {
+    title: "nvidia-container-runtime",
+    layer: "Layer 3 — Container Runtime",
+    badge: "RT", badgeColor: "#14b8a6", badgeBg: "rgba(20,184,166,0.15)",
+    body: `
+      <p>The nvidia-container-runtime is an OCI-compliant runtime that wraps the low-level container runtime (crun or runc). When a GPU container starts, it intercepts the container creation, injects GPU devices and CUDA libraries, then forwards to the underlying runtime.</p>
+      <p>There are three modes. <strong>Legacy mode</strong> injects a prestart OCI hook that reads the container spec from stdin — this caused a stdin-blocking bug in our setup on RHEL 9 with CRI-O. <strong>CDI mode</strong> uses the CDI spec to inject devices without a hook. <strong>Auto mode</strong> selects the best method dynamically and is the recommended setting.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Configuration file</div>
+        <div class="code-block"><span class="comment"># /etc/nvidia-container-runtime/config.toml</span>
+[nvidia-container-runtime]
+<span class="key">mode</span> = <span class="val">"auto"</span>          <span class="comment"># NOT "legacy"</span>
+<span class="key">runtimes</span> = <span class="val">["crun", "runc"]</span>
+
+[nvidia-container-cli]
+<span class="key">ldconfig</span> = <span class="val">"@/sbin/ldconfig"</span>
+<span class="key">load-kmods</span> = <span class="val">true</span></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Why "auto" mode, not "legacy"</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#ef4444"></span>Legacy: injects prestart hook → hook reads stdin → hangs in CRI-O</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>CDI: uses /etc/cdi/nvidia.yaml spec → no hook → no stdin issue</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>Auto: picks CDI if spec exists, falls back gracefully → safest choice</div>
+        </div>
+      </div>
+      <div class="good-box">Set mode = "auto" to match the working node config. This was the key config change that unblocked container creation.</div>`
+  },
+
+  crio: {
+    title: "CRI-O",
+    layer: "Layer 3 — Container Runtime",
+    badge: "CRI", badgeColor: "#14b8a6", badgeBg: "rgba(20,184,166,0.15)",
+    body: `
+      <p>CRI-O is the Container Runtime Interface implementation used instead of containerd in this cluster. It implements the Kubernetes CRI spec and manages container lifecycles. For GPU support, it must be configured to use the nvidia runtime as the default or as a named runtime handler.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">CRI-O nvidia config (99-nvidia.conf)</div>
+        <div class="code-block"><span class="comment"># /etc/crio/crio.conf.d/99-nvidia.conf</span>
+[crio.runtime]
+<span class="key">default_runtime</span> = <span class="val">"nvidia"</span>
+
+[crio.runtime.runtimes.nvidia]
+<span class="key">runtime_path</span> = <span class="val">"/usr/bin/nvidia-container-runtime"</span>
+<span class="key">runtime_type</span> = <span class="val">"oci"</span>
+<span class="key">runtime_root</span> = <span class="val">"/run/nvidia-container-runtime"</span></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Why default_runtime = nvidia?</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>All pods go through nvidia-container-runtime by default</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>Non-GPU pods are unaffected — auto mode skips GPU injection when NVIDIA_VISIBLE_DEVICES is not set</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>Matches the working worker node config exactly</div>
+        </div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Apply and restart</div>
+        <div class="code-block"><span class="cmd">systemctl</span> restart crio
+<span class="cmd">systemctl</span> status crio | grep Active</div>
+      </div>`
+  },
+
+  cdi: {
+    title: "CDI Spec",
+    layer: "Layer 3 — Container Runtime",
+    badge: "CDI", badgeColor: "#f59e0b", badgeBg: "rgba(245,158,11,0.15)",
+    body: `
+      <p>The Container Device Interface (CDI) spec is a YAML file that describes exactly which host devices and libraries need to be injected into a container to give it GPU access. It replaces the older prestart hook approach and avoids the stdin-blocking bug in legacy mode.</p>
+      <p>The spec is generated by <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia-ctk</code> by scanning the host for NVIDIA devices and libraries. It must be regenerated after reboots on RHEL 9 because /dev/nvidia-uvm is created after boot by nvidia-modprobe.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Generate CDI spec</div>
+        <div class="code-block"><span class="comment"># Generate spec (run after nvidia-modprobe)</span>
+<span class="cmd">nvidia-ctk</span> cdi generate --output=/etc/cdi/nvidia.yaml
+
+<span class="comment"># Verify devices listed</span>
+<span class="cmd">nvidia-ctk</span> cdi list
+<span class="comment"># nvidia.com/gpu=0</span>
+<span class="comment"># nvidia.com/gpu=GPU-bf8a7ed0-...</span>
+<span class="comment"># nvidia.com/gpu=all</span></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">What the spec contains</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#f59e0b"></span>Device paths: /dev/nvidia0, /dev/nvidiactl, /dev/nvidia-uvm</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f59e0b"></span>Library paths: libcuda.so, libnvidia-ml.so, etc.</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f59e0b"></span>Hook: /usr/bin/nvidia-cdi-hook for CDI mode</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f59e0b"></span>Firmware: GSP firmware paths for newer GPUs</div>
+        </div>
+      </div>
+      <div class="warn-box">The CDI spec must be regenerated after every reboot on RHEL 9. The nvidia-dev-init.service handles this automatically via ExecStartPost.</div>`
+  },
+
+  selinux: {
+    title: "SELinux Policy",
+    layer: "Layer 3 — Container Runtime",
+    badge: "SEC", badgeColor: "#f97316", badgeBg: "rgba(249,115,22,0.15)",
+    body: `
+      <p>This was the most hidden root cause in the entire debugging journey. SELinux was blocking the nvidia-device-plugin container from connecting to kubelet's unix socket, even though <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">getenforce</code> showed Permissive. Specific domain transitions can remain enforced even in permissive mode.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">The AVC denial that caused it</div>
+        <div class="code-block"><span class="comment"># From: ausearch -m avc -ts recent</span>
+avc: denied { <span class="val">connectto</span> } for
+  scontext=system_u:system_r:<span class="key">container_t</span>:s0:c808,c810
+  tcontext=system_u:system_r:<span class="key">kubelet_t</span>:s0-s0:c0.c1023
+  tclass=unix_stream_socket
+  <span class="val">permissive=0</span>   <span class="comment"># enforced despite getenforce Permissive!</span></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Fix: generate and apply policy</div>
+        <div class="code-block"><span class="comment"># Generate policy from audit denials</span>
+<span class="cmd">ausearch</span> -m avc -ts recent | grep nvidia-device-p \
+  | <span class="cmd">audit2allow</span> -M nvidia-device-plugin
+
+<span class="comment"># Review what it allows (verify it's safe)</span>
+cat nvidia-device-plugin.te
+
+<span class="comment"># Apply the policy</span>
+<span class="cmd">semodule</span> -i nvidia-device-plugin.pp
+
+<span class="comment"># Verify it loaded</span>
+<span class="cmd">semodule</span> -l | grep nvidia</div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Why this happened on worker10 but not worker11</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#f97316"></span>worker11 had default_runtime=nvidia — all pods used nvidia runtime, no type transition issue</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f97316"></span>worker10 used crun by default — when device plugin ran as container_t, it hit the kubelet_t socket restriction</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>The semodule policy is persistent — survives reboots</div>
+        </div>
+      </div>
+      <div class="good-box">After applying the SELinux policy: device plugin registered with kubelet successfully, nvidia.com/gpu: 1 appeared on the node.</div>`
+  },
+
+  kubelet: {
+    title: "kubelet",
+    layer: "Layer 4 — Kubernetes",
+    badge: "KBL", badgeColor: "#3b82f6", badgeBg: "rgba(59,130,246,0.15)",
+    body: `
+      <p>kubelet is the primary Kubernetes node agent. It runs on every worker node, watches for pod assignments from the API server, and manages the full pod lifecycle — creating, starting, monitoring, and stopping containers via the container runtime (CRI-O in this case).</p>
+      <p>For GPU scheduling, kubelet's device plugin framework is critical. It exposes a gRPC socket at <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">/var/lib/kubelet/device-plugins/kubelet.sock</code> that the NVIDIA device plugin connects to and registers GPU resources.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Device plugin socket</div>
+        <div class="code-block"><span class="comment"># kubelet socket for device plugin registration</span>
+ls -laZ /var/lib/kubelet/device-plugins/
+<span class="comment"># srwxr-xr-x. container_file_t  kubelet.sock</span>
+<span class="comment"># srwxr-xr-x. container_file_t  nvidia-gpu.sock</span></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Health check</div>
+        <div class="code-block"><span class="cmd">systemctl</span> status kubelet
+<span class="cmd">journalctl</span> -u kubelet --since "5min ago" \
+  | grep -i "device\|plugin\|nvidia\|register"</div>
+      </div>
+      <div class="warn-box">The SELinux context of kubelet.sock must be container_file_t so the device plugin container (container_t) can connect to it. Incorrect context causes "context deadline exceeded".</div>`
+  },
+
+  deviceplugin: {
+    title: "NVIDIA Device Plugin",
+    layer: "Layer 4 — Kubernetes",
+    badge: "DP", badgeColor: "#8b5cf6", badgeBg: "rgba(139,92,246,0.15)",
+    body: `
+      <p>The NVIDIA Device Plugin is a Kubernetes DaemonSet that runs on every GPU node. It uses NVML (NVIDIA Management Library) to discover GPUs on the host and registers them as extended resources (<code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia.com/gpu</code>) with kubelet via the device plugin API.</p>
+      <p>Once registered, Kubernetes knows the node has GPUs available and can schedule pods that request them. The plugin also handles device allocation — when a GPU pod is created, it tells kubelet which specific GPU device files to mount.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Deploy the device plugin</div>
+        <div class="code-block"><span class="cmd">kubectl</span> apply -f https://raw.githubusercontent.com/\
+  NVIDIA/k8s-device-plugin/v0.15.0/deployments/\
+  static/nvidia-device-plugin.yml</div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Verify it is working</div>
+        <div class="code-block"><span class="comment"># Pod should be Running (not CrashLoopBackOff)</span>
+<span class="cmd">kubectl</span> get pods -n kube-system | grep nvidia
+
+<span class="comment"># Logs should show successful registration</span>
+<span class="cmd">kubectl</span> logs -n kube-system &lt;nvidia-plugin-pod&gt;
+<span class="comment"># I  Starting GRPC server for 'nvidia.com/gpu'</span>
+<span class="comment"># I  Registered device plugin for 'nvidia.com/gpu' ✅</span>
+
+<span class="comment"># Node should show GPU capacity</span>
+<span class="cmd">kubectl</span> describe node &lt;gpu-node&gt; | grep nvidia.com/gpu
+<span class="comment"># nvidia.com/gpu:  1</span></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Common failure modes</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#ef4444"></span>ERROR_DRIVER_NOT_LOADED → wrong runtime, not a missing driver</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#ef4444"></span>context deadline exceeded → SELinux blocking socket connection</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#ef4444"></span>CreateContainerError → CDI spec missing /dev/nvidia-uvm</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#ef4444"></span>permission denied → SELinux context on device-plugins directory</div>
+        </div>
+      </div>`
+  },
+
+  runtimeclass: {
+    title: "RuntimeClass",
+    layer: "Layer 4 — Kubernetes",
+    badge: "RC", badgeColor: "#14b8a6", badgeBg: "rgba(20,184,166,0.15)",
+    body: `
+      <p>RuntimeClass is a Kubernetes resource that maps a named class to a specific container runtime handler. For GPU pods, it ensures that the pod is run through nvidia-container-runtime instead of the default runtime, giving the container GPU access.</p>
+      <p>In this setup, once we set <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">default_runtime = nvidia</code> in CRI-O, the RuntimeClass became optional — all pods automatically use the nvidia runtime. But it remains useful for clusters where only specific pods should get GPU access.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Create the RuntimeClass</div>
+        <div class="code-block"><span class="cmd">kubectl</span> apply -f - &lt;&lt;EOF
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: nvidia
+<span class="key">handler</span>: <span class="val">nvidia</span>
+EOF</div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Use in a pod spec</div>
+        <div class="code-block">spec:
+  <span class="key">runtimeClassName</span>: <span class="val">nvidia</span>
+  containers:
+  - name: gpu-job
+    resources:
+      limits:
+        <span class="key">nvidia.com/gpu</span>: <span class="val">1</span></div>
+      </div>
+      <div class="good-box">The handler name "nvidia" must exactly match the runtime name in CRI-O's crio.conf.d/99-nvidia.conf [crio.runtime.runtimes.nvidia].</div>`
+  },
+
+  noderesource: {
+    title: "Node Resource: nvidia.com/gpu",
+    layer: "Layer 4 — Kubernetes",
+    badge: "RES", badgeColor: "#22c55e", badgeBg: "rgba(34,197,94,0.15)",
+    body: `
+      <p>Once the device plugin registers successfully with kubelet, the node gains an extended resource called <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia.com/gpu</code>. This is what kube-scheduler uses to decide whether a node can host a GPU pod.</p>
+      <p>The resource count reflects the number of physical GPUs the device plugin discovered. A node with one RTX 2080 Ti shows <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia.com/gpu: 1</code>. A node with four A100s shows 4.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Check node GPU capacity and allocations</div>
+        <div class="code-block"><span class="cmd">kubectl</span> describe node &lt;gpu-node&gt; | grep -A5 -i nvidia
+<span class="comment"># Capacity:</span>
+<span class="comment">#   nvidia.com/gpu:  1</span>
+<span class="comment"># Allocatable:</span>
+<span class="comment">#   nvidia.com/gpu:  1</span>
+<span class="comment"># Allocated resources:</span>
+<span class="comment">#   nvidia.com/gpu  0 (0%)</span></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">GPU is NOT shared by default</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>One pod can claim the entire GPU (nvidia.com/gpu: 1)</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f59e0b"></span>Multiple pods cannot share one GPU without MIG or time-slicing</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#3b82f6"></span>Time-slicing can be enabled via device plugin config</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#3b82f6"></span>MIG on A100/H100 partitions GPU into independent instances</div>
+        </div>
+      </div>`
+  },
+
+  podspec: {
+    title: "GPU Pod Spec",
+    layer: "Layer 5 — GPU Workload Pod",
+    badge: "POD", badgeColor: "#3b82f6", badgeBg: "rgba(59,130,246,0.15)",
+    body: `
+      <p>To schedule a pod on a GPU node, you request the <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-family:JetBrains Mono,monospace;font-size:12px">nvidia.com/gpu</code> resource in the container spec. Kubernetes will only schedule this pod on nodes that have the requested number of GPUs available.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Minimal GPU pod spec</div>
+        <div class="code-block">apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-test
+spec:
+  containers:
+  - name: cuda-container
+    image: nvidia/cuda:12.0-base-ubuntu20.04
+    command: ["nvidia-smi"]
+    resources:
+      limits:
+        <span class="key">nvidia.com/gpu</span>: <span class="val">1</span>
+      requests:
+        <span class="key">nvidia.com/gpu</span>: <span class="val">1</span></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Test GPU access in a pod</div>
+        <div class="code-block"><span class="cmd">kubectl</span> apply -f gpu-test.yaml
+<span class="cmd">kubectl</span> logs gpu-test
+<span class="comment"># Should show nvidia-smi output with GPU details</span></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Important rules</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#3b82f6"></span>requests and limits must be equal for GPU resources</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#3b82f6"></span>You cannot request a fraction (nvidia.com/gpu: 0.5) without special config</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f59e0b"></span>If no node has a free GPU, pod stays Pending indefinitely</div>
+        </div>
+      </div>`
+  },
+
+  cuda: {
+    title: "CUDA Runtime",
+    layer: "Layer 5 — GPU Workload Pod",
+    badge: "CDA", badgeColor: "#8b5cf6", badgeBg: "rgba(139,92,246,0.15)",
+    body: `
+      <p>CUDA (Compute Unified Device Architecture) is NVIDIA's parallel computing platform. When a GPU container starts, the nvidia-container-toolkit automatically injects the host's CUDA libraries (libcuda.so, libnvidia-ml.so, etc.) into the container so CUDA apps can run without those libraries being in the container image.</p>
+      <p>The CUDA application inside the container talks to the GPU through the injected /dev/nvidia0 device file. The flow is: CUDA app → libcuda.so → /dev/nvidia0 → kernel driver → physical GPU.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Verify CUDA inside a container</div>
+        <div class="code-block"><span class="cmd">kubectl</span> exec -it &lt;gpu-pod&gt; -- nvidia-smi
+<span class="cmd">kubectl</span> exec -it &lt;gpu-pod&gt; -- nvcc --version
+
+<span class="comment"># Check injected devices inside pod</span>
+<span class="cmd">kubectl</span> exec -it &lt;gpu-pod&gt; -- ls /dev/nvidia*</div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">CUDA version compatibility</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#8b5cf6"></span>Container CUDA version must be ≤ host driver's CUDA version</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#8b5cf6"></span>Driver 595.45.04 supports CUDA 13.2 and below</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f59e0b"></span>Running a CUDA 12.x container on a CUDA 11.x driver will fail</div>
+        </div>
+      </div>`
+  },
+
+  workloads: {
+    title: "GPU Workload Types",
+    layer: "Layer 5 — GPU Workload Pod",
+    badge: "WL", badgeColor: "#22c55e", badgeBg: "rgba(34,197,94,0.15)",
+    body: `
+      <p>Once the GPU stack is fully configured, a wide variety of compute-intensive workloads can be scheduled as Kubernetes pods on GPU nodes.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Common GPU workload types</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span><strong>ML Training</strong> — PyTorch / TensorFlow distributed training jobs</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span><strong>Model Inference</strong> — TensorRT, Triton Inference Server, vLLM</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span><strong>Data Processing</strong> — RAPIDS cuDF, cuML for GPU-accelerated data pipelines</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span><strong>HPC / Simulation</strong> — CUDA-based scientific computing</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span><strong>Rendering</strong> — GPU-accelerated video encoding (NVENC)</div>
+        </div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Popular GPU-ready images</div>
+        <div class="code-block">nvidia/cuda:12.0-base-ubuntu20.04
+nvcr.io/nvidia/pytorch:24.01-py3
+nvcr.io/nvidia/tritonserver:24.01-py3
+nvcr.io/nvidia/tensorflow:24.01-tf2-py3</div>
+      </div>`
+  },
+
+  scheduler: {
+    title: "kube-scheduler",
+    layer: "Layer 6 — Scheduling Flow",
+    badge: "SCH", badgeColor: "#f97316", badgeBg: "rgba(249,115,22,0.15)",
+    body: `
+      <p>kube-scheduler is the Kubernetes control plane component that decides which node a pod runs on. For GPU pods, it performs a multi-stage filtering process to find nodes that have the requested GPU resources available.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">Scheduling stages for a GPU pod</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#f97316"></span><strong>1. Filter</strong> — removes nodes without nvidia.com/gpu ≥ requested count</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f97316"></span><strong>2. Filter</strong> — removes nodes where GPU is already fully allocated</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f97316"></span><strong>3. Filter</strong> — checks nodeSelector labels match (e.g. gpu=true)</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f97316"></span><strong>4. Filter</strong> — checks pod tolerates node taints (nvidia.com/gpu:NoSchedule)</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#f97316"></span><strong>5. Score</strong> — ranks remaining nodes by resource availability</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span><strong>6. Bind</strong> — assigns pod to highest-scoring node</div>
+        </div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Debug scheduling decisions</div>
+        <div class="code-block"><span class="comment"># Why is my GPU pod Pending?</span>
+<span class="cmd">kubectl</span> describe pod &lt;pod-name&gt; | grep -A10 Events
+<span class="comment"># "0/N nodes are available: N Insufficient nvidia.com/gpu"</span>
+<span class="comment"># means no node has a free GPU</span></div>
+      </div>`
+  },
+
+  affinity: {
+    title: "Node Affinity + Tolerations",
+    layer: "Layer 6 — Scheduling Flow",
+    badge: "AFF", badgeColor: "#f59e0b", badgeBg: "rgba(245,158,11,0.15)",
+    body: `
+      <p>GPU nodes are typically tainted to prevent non-GPU pods from landing on them (wasting GPU resources). GPU pods must then explicitly tolerate this taint. nodeSelector and node affinity add a second layer of control, ensuring pods only run on nodes with the right hardware.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">GPU node taint (applied to node)</div>
+        <div class="code-block"><span class="cmd">kubectl</span> taint nodes &lt;gpu-node&gt; \
+  nvidia.com/gpu=present:NoSchedule</div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Pod tolerations + nodeSelector</div>
+        <div class="code-block">spec:
+  tolerations:
+  - key: <span class="val">"nvidia.com/gpu"</span>
+    operator: <span class="val">"Exists"</span>
+    effect: <span class="val">"NoSchedule"</span>
+  nodeSelector:
+    <span class="key">accelerator</span>: <span class="val">"nvidia-gpu"</span>
+  containers:
+  - name: gpu-job
+    resources:
+      limits:
+        <span class="key">nvidia.com/gpu</span>: <span class="val">"1"</span></div>
+      </div>
+      <div class="good-box">The NVIDIA device plugin DaemonSet itself includes a toleration for nvidia.com/gpu:NoSchedule by default, so it always lands on GPU nodes.</div>`
+  },
+
+  bound: {
+    title: "Pod Bound to GPU Node",
+    layer: "Layer 6 — Scheduling Flow",
+    badge: "OK", badgeColor: "#22c55e", badgeBg: "rgba(34,197,94,0.15)",
+    body: `
+      <p>When kube-scheduler successfully binds a GPU pod to a node, the full stack executes in sequence: kubelet picks up the pod assignment, calls CRI-O to create the container, CRI-O invokes nvidia-container-runtime which uses CDI to inject GPU devices, and the CUDA application starts with direct access to the physical GPU.</p>
+      <div class="modal-section">
+        <div class="modal-section-title">What happens at container creation</div>
+        <div class="dep-list">
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>kubelet calls CRI-O CreateContainer with pod spec</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>CRI-O routes to nvidia-container-runtime (default_runtime=nvidia)</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>nvidia-container-runtime reads CDI spec, injects /dev/nvidia0, libcuda.so</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>Container starts with GPU devices mounted and CUDA libraries available</div>
+          <div class="dep-item"><span class="dep-dot" style="background:#22c55e"></span>CUDA app runs, nvidia-smi shows GPU inside container</div>
+        </div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Verify end-to-end success</div>
+        <div class="code-block"><span class="comment"># Node shows GPU capacity</span>
+<span class="cmd">kubectl</span> describe node &lt;gpu-node&gt; | grep nvidia.com/gpu
+<span class="comment"># nvidia.com/gpu:  1</span>
+
+<span class="comment"># Pod is Running</span>
+<span class="cmd">kubectl</span> get pod &lt;gpu-pod&gt;
+<span class="comment"># STATUS: Running</span>
+
+<span class="comment"># GPU visible inside pod</span>
+<span class="cmd">kubectl</span> exec &lt;gpu-pod&gt; -- nvidia-smi
+<span class="comment"># Shows GPU model + memory</span></div>
+      </div>
+      <div class="good-box">All layers healthy = GPU pod running. Failure at any single layer breaks the chain — always debug from Layer 1 upward.</div>`
+  }
+};
+
+function openModal(id) {
+  const d = data[id];
+  if (!d) return;
+  document.getElementById('modal-badge').textContent = d.badge;
+  document.getElementById('modal-badge').style.background = d.badgeBg;
+  document.getElementById('modal-badge').style.color = d.badgeColor;
+  document.getElementById('modal-layer').textContent = d.layer;
+  document.getElementById('modal-title').textContent = d.title;
+  document.getElementById('modal-body').innerHTML = d.body;
+  document.getElementById('backdrop').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeModal() {
+  document.getElementById('backdrop').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function handleBackdropClick(e) {
+  if (e.target === document.getElementById('backdrop')) closeModal();
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+</script>
+</body>
+</html>
