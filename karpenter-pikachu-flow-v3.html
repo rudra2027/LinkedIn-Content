@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Karpenter Flow — Pikachu Edition ⚡</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: linear-gradient(180deg, #e8f4fd 0%, #fef9e7 40%, #d5f5e3 100%);
+    color: #2a3a50;
+    font-family: 'Nunito', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+    user-select: none;
+  }
+
+  .grass {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 50px;
+    background: repeating-linear-gradient(78deg, #4ade80 0px, #22c55e 3px, transparent 3px, transparent 18px), #86efac;
+    z-index: 10;
+    border-top: 3px solid #16a34a;
+  }
+
+  .container {
+    max-width: 750px;
+    margin: 0 auto;
+    padding: 30px 20px 120px;
+    position: relative;
+    z-index: 5;
+  }
+
+  .title {
+    text-align: center;
+    margin-bottom: 30px;
+  }
+  .title h1 {
+    font-size: 2.1rem;
+    font-weight: 900;
+    color: #1a1a2e;
+    line-height: 1.2;
+  }
+  .title h1 .yellow { color: #eab308; }
+  .title h1 .red { color: #ef4444; }
+  .title p { color: #64748b; font-weight: 600; margin-top: 6px; font-size: 0.92rem; }
+
+  .screen-flash {
+    position: fixed; inset: 0;
+    background: #fef08a;
+    z-index: 90;
+    pointer-events: none;
+    opacity: 0;
+  }
+  .screen-flash.active { animation: flashScreen 0.35s ease-out forwards; }
+  @keyframes flashScreen { 0% { opacity: 0.5; } 100% { opacity: 0; } }
+
+  .bolt-anim {
+    position: fixed;
+    pointer-events: none;
+    z-index: 100;
+    width: 70px; height: 120px;
+    opacity: 0;
+  }
+  .bolt-anim.active { animation: boltFlash 0.55s ease-out forwards; }
+  @keyframes boltFlash {
+    0% { opacity: 1; transform: scale(0.4) rotate(-12deg); }
+    30% { opacity: 1; transform: scale(1.15) rotate(5deg); }
+    60% { opacity: 0.7; transform: scale(1) rotate(-2deg); }
+    100% { opacity: 0; transform: scale(1.4) rotate(0deg); }
+  }
+
+  /* Zap Button */
+  .zap-btn-wrap {
+    display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 10px 0 6px;
+  }
+  .zap-btn {
+    width: 80px; height: 80px;
+    border-radius: 50%;
+    border: 3px solid #eab308;
+    background: linear-gradient(145deg, #fefce8, #fef9c3);
+    cursor: pointer;
+    font-size: 3.2rem;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 18px rgba(234,179,8,0.25), inset 0 2px 4px rgba(255,255,255,0.6);
+    transition: transform 0.15s, box-shadow 0.15s;
+    animation: zapBreathe 2.2s ease-in-out infinite;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .zap-btn:hover { transform: scale(1.1); box-shadow: 0 6px 24px rgba(234,179,8,0.35); }
+  .zap-btn:active { transform: scale(0.88); }
+  .zap-btn.shocking { animation: pikaShock 0.45s ease-out; }
+  @keyframes zapBreathe { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+  @keyframes pikaShock {
+    0% { transform: scale(1) rotate(0); }
+    15% { transform: scale(1.22) rotate(-8deg); }
+    30% { transform: scale(1.15) rotate(5deg); }
+    50% { transform: scale(1.28) rotate(-3deg); }
+    100% { transform: scale(1) rotate(0); }
+  }
+  .zap-label { font-size: 0.78rem; font-weight: 800; color: #eab308; animation: blink 1.4s ease-in-out infinite; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .zap-btn-wrap.hidden { display: none; }
+
+  /* Pika Dialog */
+  .pika-dialog {
+    background: #fff;
+    border: 2px solid #eab308;
+    border-radius: 16px;
+    padding: 10px 18px;
+    font-size: 0.84rem;
+    font-weight: 700;
+    color: #92400e;
+    max-width: 340px;
+    text-align: center;
+    box-shadow: 0 4px 14px rgba(234,179,8,0.1);
+    animation: dialogPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    margin: 0 auto 10px;
+    position: relative;
+  }
+  .pika-dialog::after {
+    content: '';
+    position: absolute;
+    bottom: -8px; left: 50%; transform: translateX(-50%);
+    border-left: 8px solid transparent; border-right: 8px solid transparent;
+    border-top: 8px solid #eab308;
+  }
+  @keyframes dialogPop { 0% { transform: scale(0); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+
+  /* Message Bubble */
+  .message-bubble {
+    background: #fff;
+    border-radius: 20px 20px 20px 4px;
+    padding: 22px 24px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.04);
+    border: 2px solid #e2e8f0;
+    position: relative;
+    max-width: 100%;
+    opacity: 0;
+    transform: translateY(30px) scale(0.92);
+  }
+  .message-bubble.zapping {
+    animation: zapIn 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+  @keyframes zapIn {
+    0% { transform: translateY(35px) scale(0.3) rotate(-4deg); opacity: 0; filter: brightness(2.5) saturate(0); }
+    40% { transform: translateY(-8px) scale(1.04) rotate(2deg); opacity: 1; filter: brightness(1.4) saturate(1); }
+    70% { transform: translateY(4px) scale(0.98) rotate(-1deg); filter: brightness(1); }
+    100% { transform: translateY(0) scale(1) rotate(0deg); opacity: 1; filter: brightness(1); }
+  }
+
+  .step-num {
+    position: absolute; top: -12px; left: -10px;
+    width: 34px; height: 34px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.82rem; font-weight: 900; color: #fff;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.15);
+  }
+  .step-num.s1 { background: linear-gradient(135deg, #ef4444, #f97316); }
+  .step-num.s2 { background: linear-gradient(135deg, #a855f7, #ec4899); }
+  .step-num.s3 { background: linear-gradient(135deg, #eab308, #f59e0b); }
+  .step-num.s4 { background: linear-gradient(135deg, #3b82f6, #06b6d4); }
+  .step-num.s5 { background: linear-gradient(135deg, #22c55e, #10b981); }
+  .step-num.s6 { background: linear-gradient(135deg, #8b5cf6, #6366f1); }
+  .step-num.s7 { background: linear-gradient(135deg, #14b8a6, #059669); }
+  .step-num.s8 { background: linear-gradient(135deg, #dc2626, #b91c1c); }
+
+  .message-bubble.fire { border-color: #fecaca; }
+  .message-bubble.fire .step-title { color: #dc2626; }
+  .message-bubble.psychic { border-color: #e9d5ff; }
+  .message-bubble.psychic .step-title { color: #9333ea; }
+  .message-bubble.electric { border-color: #fef08a; }
+  .message-bubble.electric .step-title { color: #a16207; }
+  .message-bubble.water { border-color: #bfdbfe; }
+  .message-bubble.water .step-title { color: #2563eb; }
+  .message-bubble.grass { border-color: #bbf7d0; }
+  .message-bubble.grass .step-title { color: #16a34a; }
+  .message-bubble.poison { border-color: #ddd6fe; }
+  .message-bubble.poison .step-title { color: #7c3aed; }
+  .message-bubble.normal { border-color: #cbd5e1; }
+  .message-bubble.normal .step-title { color: #475569; }
+  .message-bubble.fighting { border-color: #fecaca; }
+  .message-bubble.fighting .step-title { color: #b91c1c; }
+
+  .step-emoji { font-size: 1.8rem; margin-bottom: 6px; display: block; }
+  .step-title { font-size: 1.12rem; font-weight: 900; margin-bottom: 8px; }
+  .step-desc { font-size: 0.88rem; color: #64748b; line-height: 1.7; }
+  .step-desc strong { color: #1e293b; }
+  .step-desc code {
+    background: #f1f5f9; padding: 1px 6px; border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: #6366f1;
+  }
+
+  .poke-say {
+    margin-top: 10px; padding: 10px 14px;
+    background: #fefce8; border-radius: 12px;
+    font-size: 0.82rem; color: #854d0e; font-weight: 700;
+    border-left: 4px solid #eab308;
+  }
+  .poke-say::before { content: '⚡ '; }
+
+  .wild-encounter {
+    margin-top: 12px; padding: 14px 16px;
+    background: #fef2f2; border: 2px solid #fecaca;
+    border-radius: 14px; font-size: 0.8rem; line-height: 1.6; color: #991b1b;
+  }
+  .wild-label {
+    display: inline-block; padding: 3px 10px;
+    background: #fecaca; color: #dc2626; border-radius: 8px;
+    font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;
+  }
+  .wild-fix { display: block; margin-top: 6px; color: #166534; font-weight: 700; }
+  .wild-fix::before { content: '✨ Super Effective! '; }
+
+  /* ---- YAML Cloud Popup ---- */
+  .yaml-cloud {
+    margin-top: 14px;
+    position: relative;
+    background: linear-gradient(145deg, #f0f9ff, #e0f2fe);
+    border: 2px solid #7dd3fc;
+    border-radius: 22px;
+    padding: 0;
+    box-shadow: 0 6px 24px rgba(56,189,248,0.12), 0 2px 6px rgba(0,0,0,0.04);
+    overflow: hidden;
+    animation: cloudPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .yaml-cloud::before {
+    content: '';
+    position: absolute;
+    top: -18px; left: 40px;
+    width: 50px; height: 36px;
+    background: linear-gradient(145deg, #f0f9ff, #e0f2fe);
+    border-radius: 50%;
+    border: 2px solid #7dd3fc;
+    border-bottom: none;
+    z-index: -1;
+  }
+  .yaml-cloud::after {
+    content: '';
+    position: absolute;
+    top: -28px; left: 70px;
+    width: 65px; height: 46px;
+    background: linear-gradient(145deg, #f0f9ff, #e0f2fe);
+    border-radius: 50%;
+    border: 2px solid #7dd3fc;
+    border-bottom: none;
+    z-index: -1;
+  }
+  @keyframes cloudPop {
+    0% { transform: scale(0.5) translateY(20px); opacity: 0; }
+    60% { transform: scale(1.03) translateY(-4px); opacity: 1; }
+    100% { transform: scale(1) translateY(0); opacity: 1; }
+  }
+
+  .yaml-cloud-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 18px 10px;
+    border-bottom: 1px solid rgba(125,211,252,0.4);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .yaml-cloud-header:hover { background: rgba(255,255,255,0.3); }
+  .yaml-cloud-title {
+    font-size: 0.82rem; font-weight: 800; color: #0369a1;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .yaml-cloud-title .file-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 8px;
+    background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+    color: #fff; font-size: 0.7rem; font-weight: 900;
+  }
+  .yaml-toggle-icon {
+    font-size: 1rem; color: #0ea5e9;
+    transition: transform 0.3s;
+  }
+  .yaml-toggle-icon.open { transform: rotate(180deg); }
+
+  .yaml-cloud-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.4s ease, padding 0.3s ease;
+  }
+  .yaml-cloud-body.open {
+    max-height: 2000px;
+    padding: 0 0 4px;
+  }
+
+  .yaml-code-wrap {
+    margin: 0 12px 12px;
+    background: #0f172a;
+    border-radius: 12px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    position: relative;
+  }
+  .yaml-code-wrap pre {
+    margin: 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    line-height: 1.65;
+    color: #e2e8f0;
+    white-space: pre;
+    user-select: text;
+  }
+  .yaml-code-wrap .yk { color: #7dd3fc; }       /* key */
+  .yaml-code-wrap .yv { color: #86efac; }       /* value */
+  .yaml-code-wrap .yc { color: #94a3b8; font-style: italic; } /* comment */
+  .yaml-code-wrap .ys { color: #fbbf24; }       /* string */
+
+  .copy-btn {
+    position: absolute; top: 8px; right: 8px;
+    padding: 4px 10px; border-radius: 6px;
+    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15);
+    color: #94a3b8; font-size: 0.65rem; font-weight: 700;
+    cursor: pointer; font-family: 'Nunito', sans-serif;
+    transition: background 0.2s, color 0.2s;
+    user-select: none;
+  }
+  .copy-btn:hover { background: rgba(255,255,255,0.2); color: #e2e8f0; }
+  .copy-btn.copied { background: #22c55e; color: #fff; border-color: #22c55e; }
+
+  .yaml-note {
+    padding: 8px 18px 12px;
+    font-size: 0.75rem;
+    color: #0369a1;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+  .yaml-note strong { color: #dc2626; }
+
+  /* Summary */
+  .summary-card {
+    background: linear-gradient(135deg, #fef9c3, #fef3c7, #fed7aa);
+    border: 3px solid #f59e0b;
+    border-radius: 24px;
+    padding: 30px;
+    text-align: center;
+    box-shadow: 0 8px 30px rgba(245,158,11,0.15);
+    opacity: 0;
+    transform: translateY(30px) scale(0.92);
+  }
+  .summary-card.zapping { animation: zapIn 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+  .summary-card h2 { font-size: 1.5rem; font-weight: 900; color: #92400e; margin-bottom: 16px; }
+  .summary-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .ss-item {
+    background: rgba(255,255,255,0.7); border-radius: 16px;
+    padding: 16px 10px; border: 2px solid rgba(245,158,11,0.3);
+  }
+  .ss-num { font-size: 1.9rem; font-weight: 900; color: #dc2626; }
+  .ss-item:nth-child(2) .ss-num { color: #2563eb; }
+  .ss-item:nth-child(3) .ss-num { color: #16a34a; }
+  .ss-label { font-size: 0.76rem; color: #78716c; font-weight: 700; margin-top: 4px; }
+  .key-takeaway {
+    margin-top: 18px; padding: 14px;
+    background: rgba(255,255,255,0.6); border-radius: 14px;
+    font-size: 0.85rem; color: #78716c; font-weight: 700;
+    border: 2px dashed #f59e0b;
+  }
+  .key-takeaway strong { color: #dc2626; }
+  .restart-btn {
+    margin-top: 18px; padding: 12px 28px;
+    background: linear-gradient(135deg, #eab308, #f59e0b);
+    color: #fff; font-weight: 800; font-size: 0.88rem;
+    border: none; border-radius: 30px; cursor: pointer;
+    box-shadow: 0 4px 15px rgba(234,179,8,0.3);
+    transition: transform 0.2s; font-family: 'Nunito', sans-serif;
+  }
+  .restart-btn:hover { transform: scale(1.05); }
+  .restart-btn:active { transform: scale(0.95); }
+
+  .flow-area { display: flex; flex-direction: column; gap: 0; }
+
+  @media (max-width: 600px) {
+    .title h1 { font-size: 1.6rem; }
+    .zap-btn { width: 68px; height: 68px; font-size: 2.6rem; }
+    .message-bubble { padding: 16px 18px; }
+    .summary-stats { grid-template-columns: 1fr; }
+    .pika-dialog { max-width: 260px; font-size: 0.78rem; }
+    .yaml-cloud::before, .yaml-cloud::after { display: none; }
+    .yaml-code-wrap pre { font-size: 0.65rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="grass"></div>
+<div class="screen-flash" id="screenFlash"></div>
+<svg id="boltTemplate" viewBox="0 0 120 200" style="display:none">
+  <polygon points="60,0 30,80 55,80 20,200 90,90 65,90 100,10" fill="#eab308" stroke="#f59e0b" stroke-width="2"/>
+  <polygon points="60,15 38,78 56,78 30,180 82,95 66,95 92,22" fill="#fef08a"/>
+</svg>
+
+<div class="container">
+  <div class="title">
+    <h1>How <span class="yellow">Karpenter</span> Scales <span class="red">GPU Nodes</span> in EKS</h1>
+    <p>Tap ⚡ Pikachu after each step to zap the next one into existence!</p>
+  </div>
+  <div class="flow-area" id="flowArea">
+    <div class="zap-btn-wrap" id="zapWrap0">
+      <div class="zap-btn" onclick="thunderShock(0)">⚡</div>
+      <div class="zap-label">Tap to start! ⚡</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- YAML content (generic, no org details) ----
+const yamlHelmInstall = {
+  title: "helm-install.sh",
+  note: "The <strong>--set controller.image.digest=\"\"</strong> skips digest pinning (needed when mirroring to private ECR). <strong>AWS_REGION</strong> must be explicit in private clusters.",
+  raw: `helm upgrade --install karpenter ./karpenter-v1.x.tgz \\
+  --namespace kube-system \\
+  --create-namespace \\
+  --set serviceAccount.create=true \\
+  --set serviceAccount.name=karpenter \\
+  --set settings.clusterName=<YOUR-CLUSTER-NAME> \\
+  --set settings.interruptionQueue=<YOUR-INTERRUPTION-QUEUE> \\
+  --set controller.image.repository=<YOUR-ECR-REPO> \\
+  --set controller.image.tag=karpenter-controller-v1.x.x \\
+  --set controller.image.digest="" \\
+  --set "controller.env[0].name=AWS_REGION" \\
+  --set "controller.env[0].value=<YOUR-REGION>"`,
+  highlighted: `<span class="yc"># Install Karpenter via Helm (private cluster)</span>
+helm upgrade --install karpenter ./karpenter-v1.x.tgz \\
+  --namespace kube-system \\
+  --create-namespace \\
+  --set <span class="yk">serviceAccount.create</span>=<span class="yv">true</span> \\
+  --set <span class="yk">serviceAccount.name</span>=<span class="ys">karpenter</span> \\
+  --set <span class="yk">settings.clusterName</span>=<span class="ys">&lt;YOUR-CLUSTER-NAME&gt;</span> \\
+  --set <span class="yk">settings.interruptionQueue</span>=<span class="ys">&lt;YOUR-INTERRUPTION-QUEUE&gt;</span> \\
+  --set <span class="yk">controller.image.repository</span>=<span class="ys">&lt;YOUR-ECR-REPO&gt;</span> \\
+  --set <span class="yk">controller.image.tag</span>=<span class="ys">karpenter-controller-v1.x.x</span> \\
+  --set <span class="yk">controller.image.digest</span>=<span class="ys">""</span> \\
+  --set <span class="ys">"controller.env[0].name=AWS_REGION"</span> \\
+  --set <span class="ys">"controller.env[0].value=&lt;YOUR-REGION&gt;"</span>`
+};
+
+const yamlEC2NodeClass = {
+  title: "ec2nodeclass.yaml",
+  note: "Use <strong>instanceProfile</strong> (not role) to avoid IAM API calls. Use the <strong>EKS cluster security group</strong> explicitly — this was the #1 issue.",
+  raw: `apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: gpu
+spec:
+  # Use instanceProfile, NOT role (avoids IAM API timeout)
+  instanceProfile: "<YOUR-INSTANCE-PROFILE-NAME>"
+  amiSelectorTerms:
+    - alias: al2023@latest
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "<YOUR-CLUSTER-NAME>"
+  # CRITICAL: Must be the EKS cluster SG (self-referencing rule)
+  securityGroupSelectorTerms:
+    - id: <YOUR-EKS-CLUSTER-SG-ID>
+  tags:
+    Name: "Karpenter-GPU-Node"
+    managed-by: karpenter`,
+  highlighted: `<span class="yk">apiVersion</span>: <span class="yv">karpenter.k8s.aws/v1</span>
+<span class="yk">kind</span>: <span class="yv">EC2NodeClass</span>
+<span class="yk">metadata</span>:
+  <span class="yk">name</span>: <span class="ys">gpu</span>
+<span class="yk">spec</span>:
+  <span class="yc"># Use instanceProfile, NOT role (avoids IAM API timeout)</span>
+  <span class="yk">instanceProfile</span>: <span class="ys">"&lt;YOUR-INSTANCE-PROFILE-NAME&gt;"</span>
+  <span class="yk">amiSelectorTerms</span>:
+    - <span class="yk">alias</span>: <span class="yv">al2023@latest</span>
+  <span class="yk">subnetSelectorTerms</span>:
+    - <span class="yk">tags</span>:
+        <span class="yk">karpenter.sh/discovery</span>: <span class="ys">"&lt;YOUR-CLUSTER-NAME&gt;"</span>
+  <span class="yc"># CRITICAL: Must be the EKS cluster SG (self-referencing rule)</span>
+  <span class="yk">securityGroupSelectorTerms</span>:
+    - <span class="yk">id</span>: <span class="ys">&lt;YOUR-EKS-CLUSTER-SG-ID&gt;</span>
+  <span class="yk">tags</span>:
+    <span class="yk">Name</span>: <span class="ys">"Karpenter-GPU-Node"</span>
+    <span class="yk">managed-by</span>: <span class="ys">karpenter</span>`
+};
+
+const yamlNodePool = {
+  title: "nodepool-gpu.yaml",
+  note: "The <strong>taint</strong> ensures only GPU workloads with matching tolerations land here. <strong>consolidateAfter</strong> auto-terminates idle nodes.",
+  raw: `apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu
+spec:
+  template:
+    metadata:
+      labels:
+        node-type: gpu
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: gpu
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["g4dn.xlarge", "g4dn.2xlarge", "g4dn.4xlarge"]
+      taints:
+        - key: nvidia.com/gpu
+          value: "true"
+          effect: NoSchedule
+  limits:
+    cpu: "16"
+    memory: 64Gi
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 300s`,
+  highlighted: `<span class="yk">apiVersion</span>: <span class="yv">karpenter.sh/v1</span>
+<span class="yk">kind</span>: <span class="yv">NodePool</span>
+<span class="yk">metadata</span>:
+  <span class="yk">name</span>: <span class="ys">gpu</span>
+<span class="yk">spec</span>:
+  <span class="yk">template</span>:
+    <span class="yk">metadata</span>:
+      <span class="yk">labels</span>:
+        <span class="yk">node-type</span>: <span class="ys">gpu</span>
+    <span class="yk">spec</span>:
+      <span class="yk">nodeClassRef</span>:
+        <span class="yk">group</span>: <span class="yv">karpenter.k8s.aws</span>
+        <span class="yk">kind</span>: <span class="yv">EC2NodeClass</span>
+        <span class="yk">name</span>: <span class="ys">gpu</span>
+      <span class="yk">requirements</span>:
+        - <span class="yk">key</span>: <span class="yv">kubernetes.io/arch</span>
+          <span class="yk">operator</span>: <span class="yv">In</span>
+          <span class="yk">values</span>: [<span class="ys">"amd64"</span>]
+        - <span class="yk">key</span>: <span class="yv">karpenter.sh/capacity-type</span>
+          <span class="yk">operator</span>: <span class="yv">In</span>
+          <span class="yk">values</span>: [<span class="ys">"on-demand"</span>]
+        - <span class="yk">key</span>: <span class="yv">node.kubernetes.io/instance-type</span>
+          <span class="yk">operator</span>: <span class="yv">In</span>
+          <span class="yk">values</span>: [<span class="ys">"g4dn.xlarge"</span>, <span class="ys">"g4dn.2xlarge"</span>, <span class="ys">"g4dn.4xlarge"</span>]
+      <span class="yk">taints</span>:
+        - <span class="yk">key</span>: <span class="yv">nvidia.com/gpu</span>
+          <span class="yk">value</span>: <span class="ys">"true"</span>
+          <span class="yk">effect</span>: <span class="yv">NoSchedule</span>
+  <span class="yk">limits</span>:
+    <span class="yk">cpu</span>: <span class="ys">"16"</span>
+    <span class="yk">memory</span>: <span class="yv">64Gi</span>
+  <span class="yk">disruption</span>:
+    <span class="yk">consolidationPolicy</span>: <span class="yv">WhenEmptyOrUnderutilized</span>
+    <span class="yk">consolidateAfter</span>: <span class="yv">300s</span>`
+};
+
+const yamlSmokeTest = {
+  title: "gpu-smoke-test.yaml",
+  note: "Use an image from your <strong>private ECR</strong> (Docker Hub won't work in private subnets). The <strong>toleration</strong> matches the GPU NodePool taint.",
+  raw: `apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-test
+  namespace: default
+spec:
+  tolerations:
+    - key: nvidia.com/gpu
+      value: "true"
+      effect: NoSchedule
+  containers:
+    - name: gpu-test
+      image: <YOUR-ECR-REPO>:<YOUR-IMAGE-TAG>
+      command: ["sleep", "3600"]
+      resources:
+        limits:
+          nvidia.com/gpu: 1
+  restartPolicy: Never`,
+  highlighted: `<span class="yk">apiVersion</span>: <span class="yv">v1</span>
+<span class="yk">kind</span>: <span class="yv">Pod</span>
+<span class="yk">metadata</span>:
+  <span class="yk">name</span>: <span class="ys">gpu-test</span>
+  <span class="yk">namespace</span>: <span class="ys">default</span>
+<span class="yk">spec</span>:
+  <span class="yk">tolerations</span>:
+    - <span class="yk">key</span>: <span class="yv">nvidia.com/gpu</span>
+      <span class="yk">value</span>: <span class="ys">"true"</span>
+      <span class="yk">effect</span>: <span class="yv">NoSchedule</span>
+  <span class="yk">containers</span>:
+    - <span class="yk">name</span>: <span class="ys">gpu-test</span>
+      <span class="yk">image</span>: <span class="ys">&lt;YOUR-ECR-REPO&gt;:&lt;YOUR-IMAGE-TAG&gt;</span>
+      <span class="yk">command</span>: [<span class="ys">"sleep"</span>, <span class="ys">"3600"</span>]
+      <span class="yk">resources</span>:
+        <span class="yk">limits</span>:
+          <span class="yk">nvidia.com/gpu</span>: <span class="yv">1</span>
+  <span class="yk">restartPolicy</span>: <span class="yv">Never</span>`
+};
+
+const yamlAccessEntry = {
+  title: "access-entry.sh",
+  note: "Without this, Karpenter-launched nodes <strong>cannot register</strong> with the cluster — kubelet gets rejected.",
+  raw: `aws eks create-access-entry \\
+  --cluster-name <YOUR-CLUSTER-NAME> \\
+  --principal-arn arn:aws:iam::<ACCOUNT>:role/<KARPENTER-NODE-ROLE> \\
+  --type EC2_LINUX \\
+  --region <YOUR-REGION>`,
+  highlighted: `<span class="yc"># Add Karpenter node role to EKS access entries</span>
+aws eks create-access-entry \\
+  --cluster-name <span class="ys">&lt;YOUR-CLUSTER-NAME&gt;</span> \\
+  --principal-arn <span class="ys">arn:aws:iam::&lt;ACCOUNT&gt;:role/&lt;KARPENTER-NODE-ROLE&gt;</span> \\
+  --type <span class="yv">EC2_LINUX</span> \\
+  --region <span class="ys">&lt;YOUR-REGION&gt;</span>`
+};
+
+// ---- STEPS ----
+const steps = [
+  {
+    emoji: "📦", title: "A Wild Pending Pod Appears!", type: "fire", numClass: "s1",
+    desc: `Your workload needs a GPU — it requests <code>nvidia.com/gpu: 1</code>. The Kubernetes scheduler checks every node, but no GPU is available. The pod goes <strong>Pending</strong>.`,
+    analogy: `A wild Pending Pod appeared! Your party is full — you need a new team member!`,
+    pikaText: "Pika pika! A pod is stuck! Let me help! ⚡",
+    nextLabel: "What does Karpenter do? Zap! ⚡",
+    yamls: [yamlSmokeTest]
+  },
+  {
+    emoji: "🧠", title: "Karpenter Uses Detect!", type: "psychic", numClass: "s2",
+    desc: `The Karpenter controller watches for unschedulable pods 24/7. It detects your GPU pod and reads the <strong>NodePool</strong> to see allowed instance types (g4dn.xlarge, g4dn.2xlarge, etc).`,
+    analogy: `Karpenter checks the Pokédex: "This pod needs a GPU-type node. Let me find one!"`,
+    pikaText: "Pika! I detect a pending pod! Checking the Pokédex... 🔍",
+    issues: [
+      { label: "🔥 Wild Bug: Wrong Region!", desc: `Karpenter searched in the <strong>wrong AWS region</strong> because AWS_REGION wasn't set explicitly.`, fix: `Set AWS_REGION explicitly as an env variable in the Helm install.` }
+    ],
+    nextLabel: "How does it know WHAT to launch? ⚡",
+    yamls: [yamlNodePool, yamlHelmInstall]
+  },
+  {
+    emoji: "📋", title: "Reads the EC2NodeClass Blueprint", type: "electric", numClass: "s3",
+    desc: `Karpenter reads the <strong>EC2NodeClass</strong> — which <strong>subnets</strong>, <strong>security group</strong>, <strong>AMI</strong>, and <strong>instance profile</strong> to use.`,
+    analogy: `Choosing gear: Ultra Ball (subnets), Shield (security group), TM (AMI), Trainer Card (IAM)!`,
+    pikaText: "PIKA!! The security group was the FINAL BOSS! 💀",
+    issues: [
+      { label: "🔥 Wild Bug: IAM API Timeout!", desc: `<code>spec.role</code> calls IAM API — a global service with <strong>no VPC endpoint</strong>. Timed out.`, fix: `Switched to <code>spec.instanceProfile</code> to skip IAM calls.` },
+      { label: "🔥🔥 LEGENDARY Bug: Wrong Security Group! (2 DAYS!)", desc: `Tag-based discovery picked the <strong>wrong SG</strong>. The EKS cluster SG (with self-referencing rule) is required. <strong>Blocked for 2 days.</strong>`, fix: `Changed to explicit EKS cluster security group ID.` }
+    ],
+    nextLabel: "Now it launches an instance! Zap! ⚡",
+    yamls: [yamlEC2NodeClass]
+  },
+  {
+    emoji: "☁️", title: "Calls EC2 API — Launches Instance!", type: "water", numClass: "s4",
+    desc: `Karpenter creates a <strong>NodeClaim</strong>, then calls EC2 <code>RunInstances</code> directly via VPC endpoints. No Auto Scaling Groups — a direct API call. A GPU instance starts booting.`,
+    analogy: `Throwing the Poké Ball at a wild GPU Node... wiggles three times... CAUGHT! 🎯`,
+    pikaText: "Pika pika! Throwing the Poké Ball at EC2! 🎯",
+    issues: [
+      { label: "🔥 Wild Bug: AWS API Timeouts!", desc: `Missing VPC endpoints for <strong>STS, SQS, SSM</strong> in the private VPC.`, fix: `Created interface VPC endpoints with private DNS enabled.` }
+    ],
+    nextLabel: "The instance is booting! ⚡"
+  },
+  {
+    emoji: "🖥️", title: "Instance Boots with GPU Drivers", type: "grass", numClass: "s5",
+    desc: `The GPU instance boots with a GPU-optimized AMI. <strong>nodeadm</strong> configures kubelet, starts containerd, and loads <strong>NVIDIA drivers</strong>. Takes ~60-90 seconds.`,
+    analogy: `Your new Pokémon is learning moves — kubelet (Quick Attack), containerd (Protect), NVIDIA (Thunderbolt)!`,
+    pikaText: "The new node is hatching! Loading GPU drivers... 🥚→🖥️",
+    nextLabel: "Can the node join the cluster? ⚡"
+  },
+  {
+    emoji: "🔐", title: "Kubelet Registers with the Cluster", type: "poison", numClass: "s6",
+    desc: `Kubelet resolves the EKS API via VPC endpoint DNS, authenticates with STS, and sends a registration request. The control plane checks the <strong>access entry list</strong>.`,
+    analogy: `Registering at the Pokémon Center — Nurse Joy (EKS API) checks your Trainer ID. No badge? No entry!`,
+    pikaText: "PIKAAAAA! The security group was the final boss ALL ALONG! ⚡⚡⚡",
+    issues: [
+      { label: "🔥 Wild Bug: Access Entry Missing!", desc: `Karpenter node's IAM role wasn't in EKS access entries. Kubelet was <strong>rejected</strong>.`, fix: `Added the Karpenter node role as an EC2_LINUX access entry.` },
+      { label: "🔥 FINAL BOSS: kubelet TCP Timeout!", desc: `DNS resolved but TCP to port 443 <strong>timed out</strong>. EKS API VPC endpoint only allows traffic from the cluster SG. Node had wrong SG.`, fix: `Ensuring nodes get the cluster SG (explicit ID) fixed everything.` }
+    ],
+    nextLabel: "Did it work?! ⚡",
+    yamls: [yamlAccessEntry]
+  },
+  {
+    emoji: "✅", title: "Node Ready — Pod Scheduled!", type: "normal", numClass: "s7",
+    desc: `The node appears as <strong>Ready</strong>. The scheduler places the pod on it. NVIDIA device plugin exposes the GPU. <strong>Total: ~2-3 minutes</strong> from pending to running.`,
+    analogy: `EVOLUTION COMPLETE! 🎉 Pending Pod evolved into Running Workload! Battle won!`,
+    pikaText: "PIKA PIKA!! The pod is running! We did it! 🏆⚡",
+    nextLabel: "What about cleanup? ⚡"
+  },
+  {
+    emoji: "🧹", title: "Auto Cleanup — No Wasted Spend", type: "fighting", numClass: "s8",
+    desc: `When the workload finishes, the node becomes empty. After the idle window (e.g. 5 min), Karpenter <strong>auto-terminates</strong> the instance. No paying for idle GPUs.`,
+    analogy: `After the battle, your Pokémon returns to its Poké Ball. No need to keep it out!`,
+    pikaText: "Time to rest! GPU node goes back to its Poké Ball. Pika~ 😴",
+    nextLabel: "See the final summary! 🏆"
+  }
+];
+
+let isAnimating = false;
+const flowArea = document.getElementById('flowArea');
+const screenFlash = document.getElementById('screenFlash');
+
+function thunderShock(stepIndex) {
+  if (isAnimating) return;
+  isAnimating = true;
+  const clickedWrap = document.getElementById('zapWrap' + stepIndex);
+  const btn = clickedWrap.querySelector('.zap-btn');
+  btn.classList.add('shocking');
+  setTimeout(() => btn.classList.remove('shocking'), 450);
+  screenFlash.classList.remove('active');
+  void screenFlash.offsetWidth;
+  screenFlash.classList.add('active');
+  createBolt(btn);
+  createSparks(btn);
+  setTimeout(() => {
+    clickedWrap.classList.add('hidden');
+    if (stepIndex < steps.length) addStep(stepIndex);
+    else addSummary();
+    isAnimating = false;
+  }, 380);
+}
+
+function createBolt(el) {
+  const b = document.getElementById('boltTemplate').cloneNode(true);
+  b.style.display='block'; b.style.position='fixed'; b.style.width='65px'; b.style.height='110px';
+  b.style.zIndex='100'; b.style.pointerEvents='none'; b.id='';
+  b.classList.add('bolt-anim');
+  const r = el.getBoundingClientRect();
+  b.style.left = (r.left+r.width/2-32)+'px';
+  b.style.top = (r.bottom-10)+'px';
+  b.classList.add('active');
+  document.body.appendChild(b);
+  setTimeout(()=>b.remove(), 600);
+}
+
+function createSparks(el) {
+  const r = el.getBoundingClientRect();
+  const cx = r.left+r.width/2, cy = r.top+r.height/2;
+  for (let i=0;i<10;i++) {
+    const s = document.createElement('div');
+    const sz = 3+Math.random()*5;
+    s.style.cssText=`position:fixed;width:${sz}px;height:${sz}px;border-radius:50%;left:${cx}px;top:${cy}px;z-index:95;pointer-events:none;transition:all 0.45s cubic-bezier(0.25,0.46,0.45,0.94);`;
+    s.style.background=['#eab308','#fbbf24','#fef08a','#fff'][Math.floor(Math.random()*4)];
+    s.style.boxShadow='0 0 6px #eab308';
+    document.body.appendChild(s);
+    const a=(Math.PI*2*i)/10+(Math.random()-0.5)*0.5, d=50+Math.random()*70;
+    requestAnimationFrame(()=>{
+      s.style.left=(cx+Math.cos(a)*d)+'px'; s.style.top=(cy+Math.sin(a)*d)+'px';
+      s.style.opacity='0'; s.style.transform='scale(0)';
+    });
+    setTimeout(()=>s.remove(),500);
+  }
+}
+
+function buildYamlCloud(yamlObj) {
+  const id = 'yaml_' + Math.random().toString(36).substr(2,6);
+  return `
+    <div class="yaml-cloud">
+      <div class="yaml-cloud-header" onclick="toggleYaml('${id}',this)">
+        <div class="yaml-cloud-title">
+          <span class="file-icon">📄</span>
+          ${yamlObj.title}
+        </div>
+        <span class="yaml-toggle-icon" id="icon_${id}">▼</span>
+      </div>
+      <div class="yaml-cloud-body" id="${id}">
+        <div class="yaml-note">${yamlObj.note}</div>
+        <div class="yaml-code-wrap">
+          <button class="copy-btn" onclick="copyYaml(event, \`${encodeURIComponent(yamlObj.raw)}\`, this)">Copy</button>
+          <pre>${yamlObj.highlighted}</pre>
+        </div>
+      </div>
+    </div>`;
+}
+
+function toggleYaml(id, header) {
+  const body = document.getElementById(id);
+  const icon = document.getElementById('icon_'+id);
+  body.classList.toggle('open');
+  icon.classList.toggle('open');
+}
+
+function copyYaml(e, encodedRaw, btn) {
+  e.stopPropagation();
+  const raw = decodeURIComponent(encodedRaw);
+  navigator.clipboard.writeText(raw).then(()=>{
+    btn.textContent='Copied!'; btn.classList.add('copied');
+    setTimeout(()=>{ btn.textContent='Copy'; btn.classList.remove('copied'); }, 2000);
+  }).catch(()=>{});
+}
+
+function addStep(index) {
+  const step = steps[index];
+  const dialog = document.createElement('div');
+  dialog.className = 'pika-dialog';
+  dialog.textContent = step.pikaText;
+  flowArea.appendChild(dialog);
+
+  let issuesHtml = '';
+  if (step.issues) {
+    step.issues.forEach(iss => {
+      issuesHtml += `<div class="wild-encounter"><div class="wild-label">${iss.label}</div><br/>${iss.desc}<span class="wild-fix">${iss.fix}</span></div>`;
+    });
+  }
+
+  let yamlsHtml = '';
+  if (step.yamls) {
+    step.yamls.forEach(y => { yamlsHtml += buildYamlCloud(y); });
+  }
+
+  const bubble = document.createElement('div');
+  bubble.className = `message-bubble ${step.type} zapping`;
+  bubble.innerHTML = `
+    <div class="step-num ${step.numClass}">${index+1}</div>
+    <span class="step-emoji">${step.emoji}</span>
+    <div class="step-title">${step.title}</div>
+    <div class="step-desc">${step.desc}</div>
+    <div class="poke-say">${step.analogy}</div>
+    ${issuesHtml}
+    ${yamlsHtml}
+  `;
+  flowArea.appendChild(bubble);
+
+  // Auto-open first yaml in each step
+  if (step.yamls && step.yamls.length > 0) {
+    setTimeout(() => {
+      const firstBody = bubble.querySelector('.yaml-cloud-body');
+      const firstIcon = bubble.querySelector('.yaml-toggle-icon');
+      if (firstBody) { firstBody.classList.add('open'); }
+      if (firstIcon) { firstIcon.classList.add('open'); }
+    }, 600);
+  }
+
+  const nextIndex = index + 1;
+  const nextWrap = document.createElement('div');
+  nextWrap.className = 'zap-btn-wrap';
+  nextWrap.id = 'zapWrap' + nextIndex;
+  nextWrap.innerHTML = `
+    <div class="zap-btn" onclick="thunderShock(${nextIndex})">⚡</div>
+    <div class="zap-label">${step.nextLabel}</div>
+  `;
+  flowArea.appendChild(nextWrap);
+  setTimeout(()=> bubble.scrollIntoView({ behavior:'smooth', block:'center' }), 100);
+}
+
+function addSummary() {
+  const dialog = document.createElement('div');
+  dialog.className = 'pika-dialog';
+  dialog.textContent = "PIKA PIKAAA!! All bugs defeated! Journey complete! 🏆⚡";
+  flowArea.appendChild(dialog);
+  const card = document.createElement('div');
+  card.className = 'summary-card zapping';
+  card.innerHTML = `
+    <h2>⚡ Gotta Debug 'Em All! ⚡</h2>
+    <div class="summary-stats">
+      <div class="ss-item"><div class="ss-num">11</div><div class="ss-label">Wild Bugs Defeated</div></div>
+      <div class="ss-item"><div class="ss-num">2 days</div><div class="ss-label">Legendary SG Battle</div></div>
+      <div class="ss-item"><div class="ss-num">~3 min</div><div class="ss-label">Pending → Running</div></div>
+    </div>
+    <div class="key-takeaway">
+      🔑 Key takeaway: In private EKS clusters, the <strong>Security Group</strong> on Karpenter nodes must be the <strong>EKS cluster SG</strong> — the one with the self-referencing rule. Everything else flows from there.
+    </div>
+    <button class="restart-btn" onclick="restartFlow()">⚡ Replay the Flow!</button>
+  `;
+  flowArea.appendChild(card);
+  setTimeout(()=> card.scrollIntoView({ behavior:'smooth', block:'center' }), 100);
+}
+
+function restartFlow() {
+  flowArea.innerHTML = `
+    <div class="zap-btn-wrap" id="zapWrap0">
+      <div class="zap-btn" onclick="thunderShock(0)">⚡</div>
+      <div class="zap-label">Tap to start! ⚡</div>
+    </div>`;
+  window.scrollTo({ top:0, behavior:'smooth' });
+}
+
+document.addEventListener('dblclick', e => e.preventDefault());
+</script>
+</body>
+</html>
